@@ -1,0 +1,12 @@
+# Copyright (c) 2026 WindRPC
+#
+# SPDX-License-Identifier: MIT
+#
+# Nanopb options for common
+bitnari.windrpc.service.common.DeviceInfo.fw_revision max_length: 32
+bitnari.windrpc.service.common.DeviceInfo.hw_revision max_length: 32
+bitnari.windrpc.service.common.DeviceInfo.manufacturer_name max_length: 64
+bitnari.windrpc.service.common.DeviceInfo.model_number max_length: 64
+bitnari.windrpc.service.common.DeviceInfo.serial_number max_length: 64
+bitnari.windrpc.service.common.PingResponse.core_version_name max_length: 32
+bitnari.windrpc.service.common.PingResponse.spec_version_name max_length: 32

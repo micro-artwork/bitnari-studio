@@ -1,0 +1,9 @@
+# Copyright (c) 2026 WindRPC
+#
+# SPDX-License-Identifier: MIT
+#
+# Nanopb options for config
+bitnari.windrpc.service.config.WifiConfig.psk max_size: 65
+bitnari.windrpc.service.config.WifiConfig.ssid max_size: 33
+bitnari.windrpc.service.config.WifiStatus.ip_addr max_size: 16
+bitnari.windrpc.service.config.WifiStatus.ssid max_size: 33

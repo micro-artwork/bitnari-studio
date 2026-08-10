@@ -1,0 +1,8 @@
+# Copyright (c) 2026 WindRPC
+#
+# SPDX-License-Identifier: MIT
+#
+# Nanopb options for types
+bitnariri.windrpc.types.Status.details max_length: 64
+bitnariri.windrpc.types.Status.message max_length: 64
+bitnariri.windrpc.types.Subscribe.data max_length: 32

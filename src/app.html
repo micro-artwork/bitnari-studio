@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: http://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline';"
+    />
+    <title>Bitnari Studio</title>
+    %sveltekit.head%
+  </head>
+  <body
+    data-sveltekit-preload-data="hover"
+    class="bg-zinc-950 text-zinc-100 antialiased select-none overflow-hidden"
+  >
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+# Copyright (c) 2026 WindRPC
+#
+# SPDX-License-Identifier: MIT
+#
+# Nanopb options for led
+bitnari.windrpc.service.led.PixelChunk.colors max_count: 58
+bitnari.windrpc.service.led.PixelData.colors max_count: 200
