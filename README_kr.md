@@ -4,8 +4,6 @@
 
 Bitnari Studio는 PC 환경을 위한 오픈소스 기반 앰비언트 라이트(Ambient Light) 시스템인 Bitnari Project(빛나리 프로젝트)의 데스크톱 전용 제어 프로그램입니다.
 
-'Bitnari'는 순우리말 '빛나리(shining or will shine)'의 발음을 영문으로 풀어쓴 것입니다.
-
 <p align="center">
   <img src="docs/demo.png" width="100%" alt="Bitnari Studio Demo Preview">
 </p>
