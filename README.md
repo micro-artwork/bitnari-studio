@@ -39,8 +39,8 @@ This repository includes a JavaScript/TypeScript-based WindRPC client SDK.
   - Captures display edge colors to stream dynamic ambient lighting effects.
 - Audio Rhythm Visualizer
   - Supports spectrum analysis for system audio output response.
-- 3D Interactive Preview
-  - Provides a 3D visualization preview of screen and LED strip layouts.
+- Interactive LED Geometry Preview
+  - Provides an interactive visualization preview of screen edge LED layouts, pixel counts per side, starting position, and direction.
 - Multi-Channel Transport Support (USB Serial / Wi-Fi UDP)
   - Supports USB Serial (COBS framing) and network (Wi-Fi UDP) transmission.
 - Real-Time Power Monitoring & Fault Alerts (Power Telemetry & Safety)

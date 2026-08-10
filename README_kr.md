@@ -39,8 +39,8 @@ Bitnari Studio와 Bitnari LED 간 원활한 통신 메커니즘 확보 및 유�
   - PC 모니터 주변부 색상을 캡처하여 스트리밍 앰비언트 라이트 효과를 생성합니다.
 - 오디오 리듬 비주얼라이저 (Audio Rhythm Visualizer)
   - 시스템 출력 오디오 반응 스펙트럼 분석을 지원합니다.
-- 3D 인터랙티브 프리뷰 (3D Interactive Preview)
-  - 실제 LED 스트립 배치 위치와 모니터 배치를 3D 화면상에서 미리 볼 수 있는 시각화 기능을 제공합니다.
+- 인터랙티브 LED 지오메트리 프리뷰 (Interactive LED Geometry Preview)
+  - 실제 LED 스트립의 모니터 부착 위치(상/하/좌/우 픽셀 개수), 시작점(BottomLeft 등) 및 순서(시계/반시계 방향)를 화면상에서 직관적으로 설정하고 시각화하는 프리뷰 기능을 제공합니다.
 - 다중 통신 채널 지원 (USB Serial / Wi-Fi UDP)
   - USB 시리얼(COBS 프레이밍) 및 네트워크(Wi-Fi UDP)를 통한 원격 전송을 지원합니다.
 - 실시간 전력 모니터링 및 결함 알림 (Power Telemetry & Safety)
