@@ -45,6 +45,7 @@ class AppConfigStore {
   audioSensitivity = $state(1.5);
   audioPalette = $state('Party'); // 'Party' | 'Neon' | 'Fire' | 'Ocean'
   audioFrameRate = $state(60);
+  audioStereoMode = $state(true); // Stereo Spatial Left/Right audio channel separation
 
   // 3. LED Layout & Geometry
   topPixels = $state(58);
@@ -131,6 +132,7 @@ class AppConfigStore {
       audioSensitivity: this.audioSensitivity,
       audioPalette: this.audioPalette,
       audioFrameRate: this.audioFrameRate,
+      audioStereoMode: this.audioStereoMode,
 
       topPixels: this.topPixels,
       bottomPixels: this.bottomPixels,
@@ -200,6 +202,8 @@ class AppConfigStore {
     if (data.audioPalette !== undefined) this.audioPalette = data.audioPalette;
     if (data.audioFrameRate !== undefined)
       this.audioFrameRate = data.audioFrameRate;
+    if (data.audioStereoMode !== undefined)
+      this.audioStereoMode = data.audioStereoMode;
 
     if (data.topPixels !== undefined) this.topPixels = data.topPixels;
     if (data.bottomPixels !== undefined) this.bottomPixels = data.bottomPixels;

@@ -7,7 +7,7 @@
 	import { onMount } from 'svelte';
 
 	import { windRpcClient, cobsEncode, cobsDecode, decodePowerinfo } from '$lib/windrpc/WindRpcClient.js';
-	import { lerpColors, enhanceSaturation, applyPowerManagement } from '$lib/utils/imageUtil.js';
+	import { lerpColors, enhanceSaturation, applyPowerManagement, GammaRgb, applyGammaCorrection } from '$lib/utils/imageUtil.js';
 	import { initScreenCapture, stopScreenCapture, sampleScreenColors, applyBlankMask } from '$lib/services/screenCapture.js';
 	import { initAudioCapture, stopAudioCapture, getAudioAnalysis, getAudioInputDevices } from '$lib/services/audioService.js';
 	import { sampleMoodLightColors, sampleAudioRhythmColors } from '$lib/services/moodLightService.js';
@@ -23,6 +23,11 @@
 	let showDeviceSettingsModal = $state(false);
 	let activeTransportTab = $state('usb'); // 'usb' | 'udp'
 	let isUdpSearching = $state(false);
+
+	let currentGammaTable = $derived.by(() => {
+		if (!configStore.gammaEnabled) return null;
+		return GammaRgb.createTable(configStore.gammaR, configStore.gammaG, configStore.gammaB);
+	});
 	let targetUdpIp = $state('192.168.1.119');
 	let discoveredUdpTarget = $state({ ip: '192.168.1.119', port: 5000 });
 	let udpSearchStatusText = $state('Target Board IP Ready');
@@ -51,7 +56,7 @@
 	let autoCalibStatusText = $state('');
 
 	async function runAutoPowerCalibration() {
-		if (!configStore.isConnected) return;
+		if (!configStore.isConnected || configStore.isRunning || isAutoCalibrating) return;
 		isAutoCalibrating = true;
 		autoCalibStatusText = '1/4: Measuring OFF Standby Power...';
 		try {
@@ -561,6 +566,20 @@
 		}
 	}
 
+	let streamSessionId = 0;
+	let lastActiveSyncMode = $state(configStore.syncMode);
+
+	// Seamless Hot-Switching: Reactively switch capture engines cleanly when mode changes during active sync
+	$effect(() => {
+		const curMode = configStore.syncMode;
+		if (curMode !== lastActiveSyncMode) {
+			lastActiveSyncMode = curMode;
+			if (configStore.isRunning && configStore.isConnected) {
+				startStreaming();
+			}
+		}
+	});
+
 	function toggleRun() {
 		if (!configStore.isConnected) {
 			toggleConnect();
@@ -575,8 +594,9 @@
 	}
 
 	async function startStreaming() {
+		const thisSession = ++streamSessionId;
 		stopStreaming();
-		console.log(`[Streaming] Starting sync mode: "${configStore.syncMode}"...`);
+		console.log(`[Streaming] Starting sync mode: "${configStore.syncMode}" (Session #${thisSession})...`);
 
 		if (configStore.syncMode === 'ScreenSync') {
 			await initScreenCapture(configStore.selectedScreenId);
@@ -584,11 +604,17 @@
 			await initAudioCapture(configStore.audioSource, configStore.selectedAudioDeviceId);
 		}
 
+		// Clean cancellation if user switched mode again while async capture initialization was in flight
+		if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
+			console.log(`[Streaming] Stale session #${thisSession} aborted cleanly.`);
+			return;
+		}
+
 		let frameCount = 0;
 		let lastFrameTime = performance.now();
 
 		function streamTick() {
-			if (!configStore.isRunning || !configStore.isConnected) {
+			if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
 				stopStreaming();
 				return;
 			}
@@ -634,7 +660,12 @@
 			} else if (configStore.syncMode === 'AudioSync') {
 				liveAudioAnalysis = getAudioAnalysis(configStore.audioSensitivity);
 				rawColors = sampleAudioRhythmColors(totalPixels, {
-					audioPalette: configStore.audioPalette
+					audioPalette: configStore.audioPalette,
+					audioStereoMode: configStore.audioStereoMode,
+					topPixels: configStore.topPixels,
+					bottomPixels: configStore.bottomPixels,
+					leftPixels: configStore.leftPixels,
+					rightPixels: configStore.rightPixels
 				}, liveAudioAnalysis);
 			} else if (configStore.syncMode === 'MoodLight') {
 				rawColors = sampleMoodLightColors(totalPixels, {
@@ -647,6 +678,12 @@
 
 			// Apply color tuning & smoothing
 			let processedColors = rawColors.map(c => enhanceSaturation(c, configStore.saturationBoost));
+
+			// Apply Per-Channel Gamma Calibration Table
+			if (currentGammaTable) {
+				processedColors = applyGammaCorrection(processedColors, currentGammaTable);
+			}
+
 			if (prevColors.length === processedColors.length && configStore.smoothingFactor < 1.0) {
 				processedColors = lerpColors(prevColors, processedColors, configStore.smoothingFactor);
 			}
@@ -1346,6 +1383,28 @@
 					</select>
 				</div>
 
+				<!-- Stereo Spatial Audio Mapping Switch -->
+				<div class="flex items-center justify-between p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
+					<div class="flex flex-col gap-0.5">
+						<span class="text-xs font-medium text-zinc-200">Stereo Spatial Audio Mapping</span>
+						<span class="text-[11px] text-zinc-400">Splits Left & Right audio channels across monitor edges for 3D soundstage immersion</span>
+					</div>
+					<button 
+						type="button"
+						role="switch"
+						aria-label="Toggle Stereo Spatial Mapping"
+						aria-checked={configStore.audioStereoMode}
+						onclick={() => configStore.audioStereoMode = !configStore.audioStereoMode}
+						class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
+						{configStore.audioStereoMode ? 'bg-pink-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
+					>
+						<span 
+							class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+							{configStore.audioStereoMode ? 'translate-x-4' : 'translate-x-0'}"
+						></span>
+					</button>
+				</div>
+
 				<!-- Audio Sensitivity Slider -->
 				<div class="flex flex-col gap-3 p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
 					<div class="flex justify-between items-center text-xs">
@@ -1406,8 +1465,9 @@
 						class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none titlebar-no-drag cursor-pointer"
 					>
 						<option value="Static">Static Solid Color</option>
-						<option value="Breathing">Breathing Pulse</option>
-						<option value="RainbowCycle">Smooth Rainbow Flow</option>
+						<option value="Breathing">Gentle Breathing</option>
+						<option value="Pulse">Heartbeat Pulse</option>
+						<option value="Wave">Color Wave Flow</option>
 					</select>
 				</div>
 
@@ -1632,8 +1692,9 @@
 						<button 
 							type="button"
 							onclick={runAutoPowerCalibration}
-							disabled={!configStore.isConnected || isAutoCalibrating}
-							class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-bold titlebar-no-drag cursor-pointer flex items-center gap-1.5 shadow shrink-0"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white text-xs font-bold titlebar-no-drag cursor-pointer flex items-center gap-1.5 shadow shrink-0"
+							title={configStore.isRunning ? "Stop sync streaming before calibrating power" : "Power Sensor Auto Sequence"}
 						>
 							<Zap class="w-3.5 h-3.5 {isAutoCalibrating ? 'animate-spin' : ''}" />
 							<span>{isAutoCalibrating ? 'Calibrating...' : 'Power Sensor Auto Sequence'}</span>
@@ -1654,8 +1715,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('OFF')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-300 text-xs font-medium titlebar-no-drag border border-zinc-700 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:pointer-events-none text-zinc-300 text-xs font-medium titlebar-no-drag border border-zinc-700 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Turn OFF LEDs"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-zinc-600"></span>
 							<span>OFF (Standby)</span>
@@ -1663,8 +1725,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('RED')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 disabled:opacity-40 text-rose-300 text-xs font-medium titlebar-no-drag border border-rose-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 disabled:opacity-40 disabled:pointer-events-none text-rose-300 text-xs font-medium titlebar-no-drag border border-rose-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Red"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
 							<span>Full Red</span>
@@ -1672,8 +1735,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('GREEN')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-40 text-emerald-300 text-xs font-medium titlebar-no-drag border border-emerald-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-40 disabled:pointer-events-none text-emerald-300 text-xs font-medium titlebar-no-drag border border-emerald-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Green"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
 							<span>Full Green</span>
@@ -1681,8 +1745,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('BLUE')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-sky-950/40 hover:bg-sky-900/60 disabled:opacity-40 text-sky-300 text-xs font-medium titlebar-no-drag border border-sky-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-sky-950/40 hover:bg-sky-900/60 disabled:opacity-40 disabled:pointer-events-none text-sky-300 text-xs font-medium titlebar-no-drag border border-sky-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Blue"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
 							<span>Full Blue</span>
@@ -1730,7 +1795,7 @@
 						<span class="text-purple-400 font-bold">{configStore.saturationBoost.toFixed(2)}x</span>
 					</div>
 					<input 
-						type="range" min="1.0" max="2.0" step="0.05" 
+						type="range" min="1.0" max="2.5" step="0.05" 
 						bind:value={configStore.saturationBoost}
 						class="w-full accent-purple-500 cursor-pointer titlebar-no-drag"
 					/>

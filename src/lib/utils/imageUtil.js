@@ -32,6 +32,19 @@ export class GammaRgb {
 }
 
 /**
+ * Applies per-channel RGB Gamma Table correction
+ */
+export function applyGammaCorrection(colors = [], gammaTable = null) {
+  if (!colors || colors.length === 0 || !gammaTable) return colors;
+  const { r: tR, g: tG, b: tB } = gammaTable;
+  return colors.map((c) => ({
+    r: tR[Math.max(0, Math.min(255, c.r || 0))],
+    g: tG[Math.max(0, Math.min(255, c.g || 0))],
+    b: tB[Math.max(0, Math.min(255, c.b || 0))],
+  }));
+}
+
+/**
  * 1:1 Port of C# ImageUtil.cs AdjustBrightness() and AdjustPixelsForPowerLimit()
  * Mode 1: Static Brightness Scaling (% multiplier)
  * Mode 2: Adaptive Wattage Power Limit (Watts cap across all LEDs)

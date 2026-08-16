@@ -6,6 +6,8 @@ import {
   session,
   screen,
   Menu,
+  Tray,
+  nativeImage,
 } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,6 +19,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+
+// 32x32 Purple Glowing LED Icon for System Tray
+const TRAY_ICON_DATA =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIcSURBVFhH7ZbPSxtRHMffb2Ym8yq1iqBY6kFvBftv6MGLePKgR0+ePPcfCIIXBcGT515qf4HePPWgeA140Fto8SJFRasWbdLNTMbefr43qZu0WbZ1qSg58F6S3cx88p2Zt4+1XF7/72K44Wq44Wq44Wq44Wq44Wq44Wq44Wq44Wr47+K/O3h7u+j1erBti4uLM0wmb5BIJHByso/d3R28fPka2eysODkZor+/B4bRB9O0YRh9KBaLSCRi+PjxF0qlY/T3G9jb28P6egZPTxWk01fI53ewtfUCX1+9QjweQ6fThsvlhG1bGI1GmEzGcLvdxWb7hVqtjnK5jFqtjkajgePjY/R6PXRdF67r4uzsDPV6HVdXV/B4PLhcLoRCIQQCASSTSRweHiKRiOD8/Bzv379HIpHAcDiE3W7j7u4Om80Gk8kEtm3j8vISsVgMZ2dnWFxcxM3NDfb39+H1evH9+3e8ffsW+XweqVQK5XIZnU4HR0dHcBwHo9EI4/EYhmHg8vISjUYDvV4PrVZLtL+/j9FoBNM0kUqlkMlksLq6KjqdDpLJJPx+P5LJJIbDIQzDwPj5+RkXFxe4u7tDu92Gbds4Ozvr4/DwEIlEApqm4ebmBsFgEJOTk2i1WjAMA/1+H91uF8PhEIlEAjc3N2i326hWq2g2m9jY2EC5XIau68Xl5SW2t7dRKBTR7XZxfX0Np9MJu93O/8dK+L+4Gm64Gm64Gm64Gm74d3H1F1wSfgIe65V8AAAAAElFTkSuQmCC';
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 if (isDev) {
@@ -29,6 +37,62 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,LazyFrameLoading,TimeoutUI');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+function createTray() {
+  if (tray) return;
+
+  try {
+    const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA);
+    tray = new Tray(icon);
+    tray.setToolTip('HilightBox Studio');
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Open HilightBox',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]);
+
+    tray.setContextMenu(contextMenu);
+
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible()) {
+          mainWindow.focus();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+
+    tray.on('click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Main] Failed to create System Tray:', err);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,6 +115,14 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+      return false;
+    }
   });
 
   const devUrl = 'http://localhost:5173';
@@ -219,6 +291,7 @@ app.whenReady().then(() => {
   };
 
   createWindow();
+  createTray();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -228,7 +301,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isQuitting) {
     app.quit();
   }
 });
