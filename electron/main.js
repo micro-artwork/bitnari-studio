@@ -256,13 +256,17 @@ app.whenReady().then(() => {
   };
 
   // UDP RPC Handlers
-  ipcMain.handle('udp:discover', async (_, targetIp, port, timeoutMs) => {
+  ipcMain.handle('udp:discover', async (event, targetIp, port, timeoutMs) => {
     if (typeof targetIp === 'number') {
       timeoutMs = port;
       port = targetIp;
       targetIp = null;
     }
-    return await udpService.discoverBoard(targetIp, port, timeoutMs);
+    return await udpService.discoverBoard(targetIp, port, timeoutMs, (progress) => {
+      try {
+        event.sender.send('udp:discover:progress', progress);
+      } catch (e) {}
+    });
   });
 
   ipcMain.handle('udp:connect', async (_, ip, port) => {

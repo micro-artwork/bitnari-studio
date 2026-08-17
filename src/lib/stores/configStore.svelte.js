@@ -20,6 +20,10 @@ class AppConfigStore {
   isBleScanning = $state(false);
   bleNameFilter = $state('BITNARI');
 
+  // UDP Specific State
+  targetUdpIp = $state('192.168.1.119');
+  targetUdpPort = $state(5000);
+
   // 2. Synchronization Mode & Pipeline
   syncMode = $state('ScreenSync'); // 'ScreenSync' | 'AudioSync' | 'MoodLight'
   screenCaptureMethod = $state('DXGI'); // 'DXGI' | 'GDI'
@@ -167,11 +171,16 @@ class AppConfigStore {
       gammaB: this.gammaB,
       saturationBoost: this.saturationBoost,
       smoothingFactor: this.smoothingFactor,
+
+      targetUdpIp: this.targetUdpIp,
+      targetUdpPort: this.targetUdpPort,
     };
   }
 
   applySnapshot(data) {
     if (!data) return;
+    if (data.targetUdpIp !== undefined) this.targetUdpIp = data.targetUdpIp;
+    if (data.targetUdpPort !== undefined) this.targetUdpPort = data.targetUdpPort;
     if (data.syncMode !== undefined) this.syncMode = data.syncMode;
     if (data.screenCaptureMethod !== undefined)
       this.screenCaptureMethod = data.screenCaptureMethod;
