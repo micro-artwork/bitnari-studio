@@ -37,7 +37,7 @@ class UdpService {
             }, timeoutMs);
 
             probeSocket.on('error', (err) => {
-                console.warn('[UdpService] Probe socket non-fatal warning:', err.message);
+                // Ignore expected non-fatal network unreachable warnings during subnet sweeps
             });
 
             probeSocket.on('message', (msg, rinfo) => {

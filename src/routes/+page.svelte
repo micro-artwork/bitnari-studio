@@ -3,7 +3,8 @@
 	import { configStore } from '$lib/stores/configStore.svelte.js';
 	import RoiPreview from '$lib/components/RoiPreview.svelte';
 	import DeviceSettingsModal from '$lib/components/DeviceSettingsModal.svelte';
-	import { Monitor, Cpu, Sliders, Zap, Play, Square, RefreshCw, ShieldAlert, Sparkles, SlidersHorizontal, Radio, Settings, Wifi, Search, CheckCircle2, XCircle, Loader2, X } from 'lucide-svelte';
+	import DiscoveryModal from '$lib/components/DiscoveryModal.svelte';
+	import { Monitor, Cpu, Sliders, Zap, Play, Square, RefreshCw, ShieldAlert, Sparkles, SlidersHorizontal, Radio, Settings, Wifi, Search } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	import { windRpcClient, cobsEncode, cobsDecode, decodePowerinfo } from '$lib/windrpc/WindRpcClient.js';
@@ -35,12 +36,10 @@
 	let activeTransportTab = $state('usb'); // 'usb' | 'udp'
 	let isUdpSearching = $state(false);
 
-	let currentGammaTable = $derived.by(() => {
+	let gammaTable = $derived.by(() => {
 		if (!configStore.gammaEnabled) return null;
 		return GammaRgb.createTable(configStore.gammaR, configStore.gammaG, configStore.gammaB);
 	});
-	let discoveredUdpTarget = $state({ ip: configStore.targetUdpIp || '192.168.1.119', port: configStore.targetUdpPort || 5000 });
-	let udpSearchStatusText = $state('Target Board IP Ready');
 	let lastPingLatency = $state(null);
 
 	// Power Calibration Wizard States & Helpers
@@ -264,34 +263,28 @@
 				done: false,
 				error: null
 			};
-			udpSearchStatusText = 'Scanning Local Network (1-254 & Broadcast)...';
 			try {
 				const probeIp = (configStore.targetUdpIp || '').trim();
 				const probePort = Number(configStore.targetUdpPort) || 5000;
 				const discovery = await window.api.discoverUdpBoard(probeIp || null, probePort, 4500);
 				if (discovery && discovery.success && discovery.ip) {
-					discoveredUdpTarget = { ip: discovery.ip, port: discovery.port || probePort };
 					configStore.targetUdpIp = discovery.ip;
 					configStore.targetUdpPort = discovery.port || probePort;
 					discoveryProgress.found = { ip: discovery.ip, port: discovery.port || probePort };
 					discoveryProgress.done = true;
 					discoveryProgress.percent = 100;
 					discoveryProgress.status = `Bitnari Board Discovered at ${discovery.ip}:${discovery.port || probePort}`;
-					udpSearchStatusText = `Board Discovered: ${discovery.ip}:${discovery.port || probePort}`;
 				} else {
-					discoveredUdpTarget = null;
 					discoveryProgress.done = true;
 					discoveryProgress.percent = 100;
 					discoveryProgress.error = discovery?.error || 'No Bitnari Wi-Fi Server detected';
 					discoveryProgress.status = 'Subnet sweep completed. No board responded.';
-					udpSearchStatusText = 'Wi-Fi UDP Board Not Found';
 				}
 			} catch (err) {
 				console.error('[Frontend] UDP discovery error:', err);
 				discoveryProgress.done = true;
 				discoveryProgress.error = err.message;
 				discoveryProgress.status = `Discovery Error: ${err.message}`;
-				udpSearchStatusText = `Discovery Error: ${err.message}`;
 			} finally {
 				isUdpSearching = false;
 			}
@@ -558,7 +551,7 @@
 				}
 			} else if (activeTransportTab === 'udp') {
 				configStore.connectionType = 'UDP';
-				const connectIp = (configStore.targetUdpIp || '').trim() || (discoveredUdpTarget ? discoveredUdpTarget.ip : '');
+				const connectIp = (configStore.targetUdpIp || '').trim();
 				const connectPort = Number(configStore.targetUdpPort) || 5000;
 				if (!connectIp) {
 					alert('Please enter a valid board IP address or click Discover Server.');
@@ -568,7 +561,6 @@
 					try {
 						await window.api.connectUdp(connectIp, connectPort);
 						configStore.isConnected = true;
-						discoveredUdpTarget = { ip: connectIp, port: connectPort };
 						await performPingTest();
 					} catch (err) {
 						alert(`Wi-Fi UDP (${connectIp}:${connectPort}) Connection Failed: ${err.message}`);
@@ -1898,105 +1890,4 @@
 
 <DeviceSettingsModal bind:open={showDeviceSettingsModal} {sendRpcFrame} />
 
-{#if showDiscoveryModal}
-	<!-- Subnet Discovery Progress Modal Backdrop -->
-	<div class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-		<div class="glass-panel bg-zinc-950/95 border border-zinc-700/80 rounded-2xl shadow-2xl p-6 max-w-md w-full flex flex-col gap-5 titlebar-no-drag animate-in fade-in zoom-in-95 duration-150">
-			<!-- Header -->
-			<div class="flex items-center justify-between pb-3 border-b border-zinc-800">
-				<div class="flex items-center gap-2.5">
-					<div class="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-						{#if !discoveryProgress.done}
-							<Loader2 class="w-4 h-4 animate-spin text-indigo-400" />
-						{:else if discoveryProgress.found}
-							<CheckCircle2 class="w-4 h-4 text-emerald-400" />
-						{:else}
-							<XCircle class="w-4 h-4 text-amber-400" />
-						{/if}
-					</div>
-					<div>
-						<div class="text-sm font-bold text-zinc-100">Wi-Fi Server Discovery</div>
-						<div class="text-xs text-zinc-400">Scanning local subnet for Bitnari UDP Server</div>
-					</div>
-				</div>
-				<button 
-					onclick={() => showDiscoveryModal = false}
-					class="text-zinc-400 hover:text-zinc-200 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-				>
-					<X class="w-4 h-4" />
-				</button>
-			</div>
-
-			<!-- Progress Bar & Sweep Radar -->
-			<div class="flex flex-col gap-2.5">
-				<div class="flex items-center justify-between text-xs">
-					<span class="text-zinc-300 font-medium">Subnet Sweep Progress</span>
-					<span class="text-indigo-400 font-mono font-bold">{discoveryProgress.percent}%</span>
-				</div>
-				<div class="w-full bg-zinc-800/90 rounded-full h-3 overflow-hidden p-0.5 border border-zinc-700/60">
-					<div 
-						class="h-full rounded-full transition-all duration-100 ease-out {discoveryProgress.found ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400'}"
-						style="width: {discoveryProgress.percent}%"
-					></div>
-				</div>
-				<div class="flex items-center justify-between text-[11px] text-zinc-400">
-					<span class="truncate max-w-[280px] font-mono">{discoveryProgress.status}</span>
-					{#if discoveryProgress.total > 0}
-						<span class="font-mono">{discoveryProgress.scanned}/{discoveryProgress.total}</span>
-					{/if}
-				</div>
-			</div>
-
-			<!-- Found Board Card -->
-			{#if discoveryProgress.found}
-				<div class="p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-center justify-between">
-					<div class="flex items-center gap-3">
-						<CheckCircle2 class="w-5 h-5 text-emerald-400 shrink-0" />
-						<div>
-							<div class="text-xs font-bold text-emerald-300">Bitnari Board Detected!</div>
-							<div class="text-xs font-mono text-zinc-200 mt-0.5">{discoveryProgress.found.ip}:{discoveryProgress.found.port}</div>
-						</div>
-					</div>
-					<button
-						onclick={() => {
-							configStore.targetUdpIp = discoveryProgress.found.ip;
-							configStore.targetUdpPort = discoveryProgress.found.port || 5000;
-							showDiscoveryModal = false;
-						}}
-						class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow"
-					>
-						Use IP
-					</button>
-				</div>
-			{:else if discoveryProgress.done && discoveryProgress.error}
-				<div class="p-3.5 bg-amber-950/40 border border-amber-500/30 rounded-xl flex flex-col gap-1.5 text-xs text-zinc-300">
-					<div class="flex items-center gap-2 text-amber-400 font-semibold">
-						<XCircle class="w-4 h-4 shrink-0" />
-						<span>No Server Found in Subnet</span>
-					</div>
-					<div class="text-[11px] text-zinc-400 leading-relaxed">
-						Please make sure the board is powered on and connected to the same 2.4GHz Wi-Fi network as this PC.
-					</div>
-				</div>
-			{/if}
-
-			<!-- Footer Buttons -->
-			<div class="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800/80">
-				{#if discoveryProgress.done && !discoveryProgress.found}
-					<button
-						onclick={handleUdpDiscovery}
-						class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
-					>
-						Retry Scan
-					</button>
-				{/if}
-				<button
-					onclick={() => showDiscoveryModal = false}
-					class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
-				>
-					{discoveryProgress.found ? 'Done' : 'Close'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+<DiscoveryModal bind:open={showDiscoveryModal} {discoveryProgress} onRetry={handleUdpDiscovery} />
