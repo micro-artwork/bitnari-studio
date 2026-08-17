@@ -1,6 +1,6 @@
 /**
- * Screen Capture & Perimeter Color Extraction Service for Bitnari
- * Ported 1:1 from C# HilightBoxWinForm ImageUtil.cs LED geometry & rotation mapping.
+ * Screen Capture & Perimeter Color Extraction Service for Bitnari Studio
+ * LED geometry & rotation mapping.
  */
 
 let mediaStream = null;
@@ -140,15 +140,24 @@ export async function initScreenCapture(targetScreenId = '') {
 
 export function stopScreenCapture() {
   if (mediaStream) {
-    mediaStream.getTracks().forEach((t) => t.stop());
+    try {
+      mediaStream.getTracks().forEach((t) => t.stop());
+    } catch (e) {}
     mediaStream = null;
   }
   if (videoElem) {
-    videoElem.pause();
-    videoElem.srcObject = null;
+    try {
+      videoElem.pause();
+      videoElem.srcObject = null;
+      videoElem.load();
+    } catch (e) {}
     videoElem = null;
   }
-  canvasElem = null;
+  if (canvasElem) {
+    canvasElem.width = 0;
+    canvasElem.height = 0;
+    canvasElem = null;
+  }
   canvasCtx = null;
   currentScreenId = '';
 }

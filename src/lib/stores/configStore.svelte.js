@@ -20,6 +20,10 @@ class AppConfigStore {
   isBleScanning = $state(false);
   bleNameFilter = $state('BITNARI');
 
+  // UDP Specific State
+  targetUdpIp = $state('192.168.1.119');
+  targetUdpPort = $state(5000);
+
   // 2. Synchronization Mode & Pipeline
   syncMode = $state('ScreenSync'); // 'ScreenSync' | 'AudioSync' | 'MoodLight'
   screenCaptureMethod = $state('DXGI'); // 'DXGI' | 'GDI'
@@ -45,6 +49,7 @@ class AppConfigStore {
   audioSensitivity = $state(1.5);
   audioPalette = $state('Party'); // 'Party' | 'Neon' | 'Fire' | 'Ocean'
   audioFrameRate = $state(60);
+  audioStereoMode = $state(true); // Stereo Spatial Left/Right audio channel separation
 
   // 3. LED Layout & Geometry
   topPixels = $state(58);
@@ -131,6 +136,7 @@ class AppConfigStore {
       audioSensitivity: this.audioSensitivity,
       audioPalette: this.audioPalette,
       audioFrameRate: this.audioFrameRate,
+      audioStereoMode: this.audioStereoMode,
 
       topPixels: this.topPixels,
       bottomPixels: this.bottomPixels,
@@ -165,11 +171,16 @@ class AppConfigStore {
       gammaB: this.gammaB,
       saturationBoost: this.saturationBoost,
       smoothingFactor: this.smoothingFactor,
+
+      targetUdpIp: this.targetUdpIp,
+      targetUdpPort: this.targetUdpPort,
     };
   }
 
   applySnapshot(data) {
     if (!data) return;
+    if (data.targetUdpIp !== undefined) this.targetUdpIp = data.targetUdpIp;
+    if (data.targetUdpPort !== undefined) this.targetUdpPort = data.targetUdpPort;
     if (data.syncMode !== undefined) this.syncMode = data.syncMode;
     if (data.screenCaptureMethod !== undefined)
       this.screenCaptureMethod = data.screenCaptureMethod;
@@ -200,6 +211,8 @@ class AppConfigStore {
     if (data.audioPalette !== undefined) this.audioPalette = data.audioPalette;
     if (data.audioFrameRate !== undefined)
       this.audioFrameRate = data.audioFrameRate;
+    if (data.audioStereoMode !== undefined)
+      this.audioStereoMode = data.audioStereoMode;
 
     if (data.topPixels !== undefined) this.topPixels = data.topPixels;
     if (data.bottomPixels !== undefined) this.bottomPixels = data.bottomPixels;

@@ -3,11 +3,12 @@
 	import { configStore } from '$lib/stores/configStore.svelte.js';
 	import RoiPreview from '$lib/components/RoiPreview.svelte';
 	import DeviceSettingsModal from '$lib/components/DeviceSettingsModal.svelte';
+	import DiscoveryModal from '$lib/components/DiscoveryModal.svelte';
 	import { Monitor, Cpu, Sliders, Zap, Play, Square, RefreshCw, ShieldAlert, Sparkles, SlidersHorizontal, Radio, Settings, Wifi, Search } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	import { windRpcClient, cobsEncode, cobsDecode, decodePowerinfo } from '$lib/windrpc/WindRpcClient.js';
-	import { lerpColors, enhanceSaturation, applyPowerManagement } from '$lib/utils/imageUtil.js';
+	import { lerpColors, enhanceSaturation, applyPowerManagement, GammaRgb, applyGammaCorrection } from '$lib/utils/imageUtil.js';
 	import { initScreenCapture, stopScreenCapture, sampleScreenColors, applyBlankMask } from '$lib/services/screenCapture.js';
 	import { initAudioCapture, stopAudioCapture, getAudioAnalysis, getAudioInputDevices } from '$lib/services/audioService.js';
 	import { sampleMoodLightColors, sampleAudioRhythmColors } from '$lib/services/moodLightService.js';
@@ -21,11 +22,24 @@
 	let scanCountdown = $state(0);
 	let scanTimerInterval = null;
 	let showDeviceSettingsModal = $state(false);
+	let showDiscoveryModal = $state(false);
+	let discoveryProgress = $state({
+		percent: 0,
+		status: 'Initializing discovery...',
+		currentIp: '',
+		scanned: 0,
+		total: 255,
+		found: null,
+		done: false,
+		error: null
+	});
 	let activeTransportTab = $state('usb'); // 'usb' | 'udp'
 	let isUdpSearching = $state(false);
-	let targetUdpIp = $state('192.168.1.119');
-	let discoveredUdpTarget = $state({ ip: '192.168.1.119', port: 5000 });
-	let udpSearchStatusText = $state('Target Board IP Ready');
+
+	let currentGammaTable = $derived.by(() => {
+		if (!configStore.gammaEnabled) return null;
+		return GammaRgb.createTable(configStore.gammaR, configStore.gammaG, configStore.gammaB);
+	});
 	let lastPingLatency = $state(null);
 
 	// Power Calibration Wizard States & Helpers
@@ -51,7 +65,7 @@
 	let autoCalibStatusText = $state('');
 
 	async function runAutoPowerCalibration() {
-		if (!configStore.isConnected) return;
+		if (!configStore.isConnected || configStore.isRunning || isAutoCalibrating) return;
 		isAutoCalibrating = true;
 		autoCalibStatusText = '1/4: Measuring OFF Standby Power...';
 		try {
@@ -238,26 +252,39 @@
 	async function handleUdpDiscovery() {
 		if (window.api && window.api.discoverUdpBoard) {
 			isUdpSearching = true;
-			udpSearchStatusText = 'Scanning Network & IP...';
+			showDiscoveryModal = true;
+			discoveryProgress = {
+				percent: 0,
+				status: 'Starting local subnet sweep (1-254 & Broadcast)...',
+				currentIp: '',
+				scanned: 0,
+				total: 255,
+				found: null,
+				done: false,
+				error: null
+			};
 			try {
-				const probeIp = (targetUdpIp || '').trim();
-				const discovery = await window.api.discoverUdpBoard(probeIp || null, 5000, 3000);
+				const probeIp = (configStore.targetUdpIp || '').trim();
+				const probePort = Number(configStore.targetUdpPort) || 5000;
+				const discovery = await window.api.discoverUdpBoard(probeIp || null, probePort, 4500);
 				if (discovery && discovery.success && discovery.ip) {
-					discoveredUdpTarget = { ip: discovery.ip, port: discovery.port || 5000 };
-					targetUdpIp = discovery.ip;
-					udpSearchStatusText = `Board Discovered: ${discovery.ip}:${discovery.port || 5000}`;
+					configStore.targetUdpIp = discovery.ip;
+					configStore.targetUdpPort = discovery.port || probePort;
+					discoveryProgress.found = { ip: discovery.ip, port: discovery.port || probePort };
+					discoveryProgress.done = true;
+					discoveryProgress.percent = 100;
+					discoveryProgress.status = `Bitnari Board Discovered at ${discovery.ip}:${discovery.port || probePort}`;
 				} else {
-					if (probeIp) {
-						discoveredUdpTarget = { ip: probeIp, port: 5000 };
-						udpSearchStatusText = `Target IP (${probeIp}) Ready`;
-					} else {
-						discoveredUdpTarget = null;
-						udpSearchStatusText = 'Wi-Fi UDP Board Not Found';
-					}
+					discoveryProgress.done = true;
+					discoveryProgress.percent = 100;
+					discoveryProgress.error = discovery?.error || 'No Bitnari Wi-Fi Server detected';
+					discoveryProgress.status = 'Subnet sweep completed. No board responded.';
 				}
 			} catch (err) {
 				console.error('[Frontend] UDP discovery error:', err);
-				udpSearchStatusText = `Discovery Error: ${err.message}`;
+				discoveryProgress.done = true;
+				discoveryProgress.error = err.message;
+				discoveryProgress.status = `Discovery Error: ${err.message}`;
 			} finally {
 				isUdpSearching = false;
 			}
@@ -351,6 +378,7 @@
 	}
 
 	async function refreshSerialPorts() {
+		if (configStore.isConnected) return;
 		if (window.api && window.api.listPorts) {
 			try {
 				console.log('[Frontend] Requesting serial ports from Electron main process...');
@@ -523,21 +551,20 @@
 				}
 			} else if (activeTransportTab === 'udp') {
 				configStore.connectionType = 'UDP';
-				let target = discoveredUdpTarget;
-				if (!target) {
-					await handleUdpDiscovery();
-					target = discoveredUdpTarget;
+				const connectIp = (configStore.targetUdpIp || '').trim();
+				const connectPort = Number(configStore.targetUdpPort) || 5000;
+				if (!connectIp) {
+					alert('Please enter a valid board IP address or click Discover Server.');
+					return;
 				}
-				if (target && window.api && window.api.connectUdp) {
+				if (window.api && window.api.connectUdp) {
 					try {
-						await window.api.connectUdp(target.ip, target.port);
+						await window.api.connectUdp(connectIp, connectPort);
 						configStore.isConnected = true;
 						await performPingTest();
 					} catch (err) {
-						alert(`Wi-Fi UDP (${target.ip}:${target.port}) Connection Failed: ${err.message}`);
+						alert(`Wi-Fi UDP (${connectIp}:${connectPort}) Connection Failed: ${err.message}`);
 					}
-				} else {
-					alert('Board not found on active Wi-Fi network.');
 				}
 			} else if (configStore.connectionType === 'BLE') {
 				if (!configStore.selectedBleAddress) {
@@ -561,6 +588,20 @@
 		}
 	}
 
+	let streamSessionId = 0;
+	let lastActiveSyncMode = $state(configStore.syncMode);
+
+	// Seamless Hot-Switching: Reactively switch capture engines cleanly when mode changes during active sync
+	$effect(() => {
+		const curMode = configStore.syncMode;
+		if (curMode !== lastActiveSyncMode) {
+			lastActiveSyncMode = curMode;
+			if (configStore.isRunning && configStore.isConnected) {
+				startStreaming();
+			}
+		}
+	});
+
 	function toggleRun() {
 		if (!configStore.isConnected) {
 			toggleConnect();
@@ -575,8 +616,9 @@
 	}
 
 	async function startStreaming() {
+		const thisSession = ++streamSessionId;
 		stopStreaming();
-		console.log(`[Streaming] Starting sync mode: "${configStore.syncMode}"...`);
+		console.log(`[Streaming] Starting sync mode: "${configStore.syncMode}" (Session #${thisSession})...`);
 
 		if (configStore.syncMode === 'ScreenSync') {
 			await initScreenCapture(configStore.selectedScreenId);
@@ -584,11 +626,17 @@
 			await initAudioCapture(configStore.audioSource, configStore.selectedAudioDeviceId);
 		}
 
+		// Clean cancellation if user switched mode again while async capture initialization was in flight
+		if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
+			console.log(`[Streaming] Stale session #${thisSession} aborted cleanly.`);
+			return;
+		}
+
 		let frameCount = 0;
 		let lastFrameTime = performance.now();
 
 		function streamTick() {
-			if (!configStore.isRunning || !configStore.isConnected) {
+			if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
 				stopStreaming();
 				return;
 			}
@@ -634,7 +682,12 @@
 			} else if (configStore.syncMode === 'AudioSync') {
 				liveAudioAnalysis = getAudioAnalysis(configStore.audioSensitivity);
 				rawColors = sampleAudioRhythmColors(totalPixels, {
-					audioPalette: configStore.audioPalette
+					audioPalette: configStore.audioPalette,
+					audioStereoMode: configStore.audioStereoMode,
+					topPixels: configStore.topPixels,
+					bottomPixels: configStore.bottomPixels,
+					leftPixels: configStore.leftPixels,
+					rightPixels: configStore.rightPixels
 				}, liveAudioAnalysis);
 			} else if (configStore.syncMode === 'MoodLight') {
 				rawColors = sampleMoodLightColors(totalPixels, {
@@ -647,6 +700,12 @@
 
 			// Apply color tuning & smoothing
 			let processedColors = rawColors.map(c => enhanceSaturation(c, configStore.saturationBoost));
+
+			// Apply Per-Channel Gamma Calibration Table
+			if (currentGammaTable) {
+				processedColors = applyGammaCorrection(processedColors, currentGammaTable);
+			}
+
 			if (prevColors.length === processedColors.length && configStore.smoothingFactor < 1.0) {
 				processedColors = lerpColors(prevColors, processedColors, configStore.smoothingFactor);
 			}
@@ -767,6 +826,20 @@
 				windRpcClient.receiveRawDatagram(data, (notification) => {
 					console.log('%c[WindRPC UDP Notification Received]', 'color: #10b981; font-weight: bold;', notification);
 				});
+			});
+
+			window.api.on('udp:discover:progress', (data) => {
+				if (data) {
+					if (typeof data.percent === 'number') discoveryProgress.percent = data.percent;
+					if (data.status) discoveryProgress.status = data.status;
+					if (data.currentIp) discoveryProgress.currentIp = data.currentIp;
+					if (typeof data.scanned === 'number') discoveryProgress.scanned = data.scanned;
+					if (typeof data.total === 'number') discoveryProgress.total = data.total;
+					if (data.found) {
+						discoveryProgress.found = data.found;
+						discoveryProgress.done = true;
+					}
+				}
 			});
 
 			window.api.on('ble:scan-result', (devices) => {
@@ -967,7 +1040,7 @@
 
 					<button
 						disabled={configStore.isConnected}
-						onclick={() => { selectTransportTab('udp'); if (!discoveredUdpTarget) handleUdpDiscovery(); }}
+						onclick={() => selectTransportTab('udp')}
 						class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer titlebar-no-drag disabled:opacity-50 disabled:cursor-not-allowed
 						{activeTransportTab === 'udp' ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40' : 'text-zinc-400 hover:text-zinc-200'}"
 					>
@@ -978,8 +1051,9 @@
 
 				{#if activeTransportTab === 'usb'}
 					<button 
+						disabled={configStore.isConnected}
 						onclick={refreshSerialPorts}
-						class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 titlebar-no-drag cursor-pointer"
+						class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400"
 					>
 						<RefreshCw class="w-3 h-3" /> 
 						Scan / Refresh
@@ -987,8 +1061,8 @@
 				{:else}
 					<button 
 						onclick={handleUdpDiscovery}
-						disabled={isUdpSearching}
-						class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-50"
+						disabled={isUdpSearching || configStore.isConnected}
+						class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-indigo-400"
 					>
 						<RefreshCw class="w-3 h-3 {isUdpSearching ? 'animate-spin' : ''}" /> 
 						<span>{isUdpSearching ? 'Searching...' : 'Discover Server'}</span>
@@ -1038,35 +1112,32 @@
 				<!-- Wi-Fi UDP Controls -->
 				<div class="flex flex-col gap-3">
 					<div class="flex items-center gap-3">
-						<div class="flex-1 bg-zinc-900/90 border border-zinc-800 rounded-xl px-3 py-1.5 flex items-center gap-2">
+						<div class="flex-1 bg-zinc-900/90 border border-zinc-800 rounded-xl px-3 py-2.5 flex items-center gap-2">
 							<Wifi class="w-4 h-4 text-emerald-400 shrink-0" />
 							<input
 								type="text"
-								bind:value={targetUdpIp}
+								bind:value={configStore.targetUdpIp}
 								placeholder="Board IP (e.g. 192.168.1.119)"
 								disabled={configStore.isConnected}
 								class="bg-transparent border-none text-xs text-zinc-200 focus:outline-none w-full font-mono font-bold"
 							/>
 						</div>
 
+						<div class="w-28 bg-zinc-900/90 border border-zinc-800 rounded-xl px-3 py-2.5 flex items-center justify-between gap-1.5 shrink-0">
+							<span class="text-[11px] text-zinc-500 font-mono font-semibold">Port</span>
+							<input
+								type="number"
+								bind:value={configStore.targetUdpPort}
+								placeholder="5000"
+								min="1"
+								max="65535"
+								disabled={configStore.isConnected}
+								class="bg-transparent border-none text-xs text-zinc-200 focus:outline-none w-full font-mono font-bold text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+							/>
+						</div>
+
 						<button
-							onclick={async () => {
-								if (configStore.isConnected && configStore.connectionType === 'UDP') {
-									await toggleConnect();
-								} else {
-									const connectIp = (targetUdpIp || '').trim() || (discoveredUdpTarget ? discoveredUdpTarget.ip : '192.168.1.119');
-									if (!connectIp) {
-										alert('Please enter a valid board IP address.');
-										return;
-									}
-									console.log(`[Frontend] Connecting UDP directly to ${connectIp}:5000...`);
-									await window.api.connectUdp(connectIp, 5000);
-									configStore.connectionType = 'UDP';
-									configStore.isConnected = true;
-									discoveredUdpTarget = { ip: connectIp, port: 5000 };
-									await performPingTest();
-								}
-							}}
+							onclick={toggleConnect}
 							disabled={isUdpSearching}
 							class="px-4 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer titlebar-no-drag shrink-0 disabled:opacity-50
 							{configStore.isConnected && configStore.connectionType === 'UDP' ? 'bg-zinc-800 hover:bg-zinc-700 text-rose-300' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}"
@@ -1092,7 +1163,7 @@
 					<span class="w-2 h-2 rounded-full {configStore.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}"></span>
 					<span>
 						{#if configStore.isConnected}
-							<strong class="text-zinc-200">Connected:</strong> {configStore.connectionType} {configStore.connectionType === 'UDP' && discoveredUdpTarget ? `(${discoveredUdpTarget.ip})` : ''}
+							<strong class="text-zinc-200">Connected:</strong> {configStore.connectionType} {configStore.connectionType === 'UDP' && configStore.targetUdpIp ? `(${configStore.targetUdpIp}:${configStore.targetUdpPort || 5000})` : ''}
 						{:else}
 							<strong class="text-zinc-400">Status:</strong> Disconnected
 						{/if}
@@ -1346,6 +1417,28 @@
 					</select>
 				</div>
 
+				<!-- Stereo Spatial Audio Mapping Switch -->
+				<div class="flex items-center justify-between p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
+					<div class="flex flex-col gap-0.5">
+						<span class="text-xs font-medium text-zinc-200">Stereo Spatial Audio Mapping</span>
+						<span class="text-[11px] text-zinc-400">Splits Left & Right audio channels across monitor edges for 3D soundstage immersion</span>
+					</div>
+					<button 
+						type="button"
+						role="switch"
+						aria-label="Toggle Stereo Spatial Mapping"
+						aria-checked={configStore.audioStereoMode}
+						onclick={() => configStore.audioStereoMode = !configStore.audioStereoMode}
+						class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
+						{configStore.audioStereoMode ? 'bg-indigo-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
+					>
+						<span 
+							class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+							{configStore.audioStereoMode ? 'translate-x-5' : 'translate-x-0'}"
+						></span>
+					</button>
+				</div>
+
 				<!-- Audio Sensitivity Slider -->
 				<div class="flex flex-col gap-3 p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
 					<div class="flex justify-between items-center text-xs">
@@ -1406,8 +1499,9 @@
 						class="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none titlebar-no-drag cursor-pointer"
 					>
 						<option value="Static">Static Solid Color</option>
-						<option value="Breathing">Breathing Pulse</option>
-						<option value="RainbowCycle">Smooth Rainbow Flow</option>
+						<option value="Breathing">Gentle Breathing</option>
+						<option value="Pulse">Heartbeat Pulse</option>
+						<option value="Wave">Color Wave Flow</option>
 					</select>
 				</div>
 
@@ -1467,7 +1561,7 @@
 					</div>
 				</div>
 
-				<!-- LED Strip Position Configuration Table (1:1 Ported from C# HilightBox) -->
+				<!-- LED Strip Position Configuration Table -->
 				<div class="flex flex-col gap-2.5 p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
 					<div class="flex items-center justify-between border-b border-zinc-800 pb-2 text-xs font-semibold text-zinc-400 px-1">
 						<span>LED Strip Side</span>
@@ -1632,8 +1726,9 @@
 						<button 
 							type="button"
 							onclick={runAutoPowerCalibration}
-							disabled={!configStore.isConnected || isAutoCalibrating}
-							class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-bold titlebar-no-drag cursor-pointer flex items-center gap-1.5 shadow shrink-0"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:pointer-events-none text-white text-xs font-bold titlebar-no-drag cursor-pointer flex items-center gap-1.5 shadow shrink-0"
+							title={configStore.isRunning ? "Stop sync streaming before calibrating power" : "Power Sensor Auto Sequence"}
 						>
 							<Zap class="w-3.5 h-3.5 {isAutoCalibrating ? 'animate-spin' : ''}" />
 							<span>{isAutoCalibrating ? 'Calibrating...' : 'Power Sensor Auto Sequence'}</span>
@@ -1654,8 +1749,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('OFF')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-300 text-xs font-medium titlebar-no-drag border border-zinc-700 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:pointer-events-none text-zinc-300 text-xs font-medium titlebar-no-drag border border-zinc-700 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Turn OFF LEDs"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-zinc-600"></span>
 							<span>OFF (Standby)</span>
@@ -1663,8 +1759,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('RED')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 disabled:opacity-40 text-rose-300 text-xs font-medium titlebar-no-drag border border-rose-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 disabled:opacity-40 disabled:pointer-events-none text-rose-300 text-xs font-medium titlebar-no-drag border border-rose-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Red"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
 							<span>Full Red</span>
@@ -1672,8 +1769,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('GREEN')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-40 text-emerald-300 text-xs font-medium titlebar-no-drag border border-emerald-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-40 disabled:pointer-events-none text-emerald-300 text-xs font-medium titlebar-no-drag border border-emerald-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Green"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
 							<span>Full Green</span>
@@ -1681,8 +1779,9 @@
 						<button 
 							type="button"
 							onclick={() => sendTestPattern('BLUE')}
-							disabled={!configStore.isConnected}
-							class="px-2 py-2 rounded-lg bg-sky-950/40 hover:bg-sky-900/60 disabled:opacity-40 text-sky-300 text-xs font-medium titlebar-no-drag border border-sky-800/50 cursor-pointer flex flex-col items-center gap-1"
+							disabled={!configStore.isConnected || configStore.isRunning || isAutoCalibrating}
+							class="px-2 py-2 rounded-lg bg-sky-950/40 hover:bg-sky-900/60 disabled:opacity-40 disabled:pointer-events-none text-sky-300 text-xs font-medium titlebar-no-drag border border-sky-800/50 cursor-pointer flex flex-col items-center gap-1"
+							title={configStore.isRunning ? "Stop sync streaming to test patterns" : "Display Pure Blue"}
 						>
 							<span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
 							<span>Full Blue</span>
@@ -1730,7 +1829,7 @@
 						<span class="text-purple-400 font-bold">{configStore.saturationBoost.toFixed(2)}x</span>
 					</div>
 					<input 
-						type="range" min="1.0" max="2.0" step="0.05" 
+						type="range" min="1.0" max="2.5" step="0.05" 
 						bind:value={configStore.saturationBoost}
 						class="w-full accent-purple-500 cursor-pointer titlebar-no-drag"
 					/>
@@ -1759,12 +1858,12 @@
 							aria-label="Toggle Gamma Calibration"
 							aria-checked={configStore.gammaEnabled}
 							onclick={() => configStore.gammaEnabled = !configStore.gammaEnabled}
-							class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
-							{configStore.gammaEnabled ? 'bg-purple-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
+							class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
+							{configStore.gammaEnabled ? 'bg-indigo-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
 						>
 							<span 
-								class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
-								{configStore.gammaEnabled ? 'translate-x-4' : 'translate-x-0'}"
+								class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+								{configStore.gammaEnabled ? 'translate-x-5' : 'translate-x-0'}"
 							></span>
 						</button>
 					</div>
@@ -1790,3 +1889,5 @@
 </div>
 
 <DeviceSettingsModal bind:open={showDeviceSettingsModal} {sendRpcFrame} />
+
+<DiscoveryModal bind:open={showDiscoveryModal} {discoveryProgress} onRetry={handleUdpDiscovery} />

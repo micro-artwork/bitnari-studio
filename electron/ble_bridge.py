@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Python BLE Central Bridge for HilightBox Electron Application.
+Python BLE Central Bridge for Bitnari Studio Electron Application.
 Uses bleak for cross-platform BLE scanning, connection, and GATT data notification handling.
 Communicates with Electron Main Process using a line-based JSON protocol over stdio.
 """
@@ -68,23 +68,22 @@ class BleBridge:
 
                     if not raw_name or raw_name.strip() == "" or raw_name == "Unknown Device":
                         if is_nus:
-                            name = "BITNARIRI H!Light Device"
+                            name = "Bitnari LED Device"
                         else:
                             name = "Unknown Device"
                     else:
                         name = raw_name.strip()
 
                     name_lower = name.lower()
-                    is_match = ("hilight" in name_lower) or (
-                        "bitnariri" in name_lower) or is_nus
+                    is_match = ("bitnari" in name_lower) or is_nus
                     device_list.append({
                         "address": d.address,
                         "name": name,
                         "rssi": adv.rssi,
-                        "isHilight": is_match
+                        "isBitnari": is_match
                     })
                 device_list.sort(key=lambda x: (
-                    not x["isHilight"], -x["rssi"]))
+                    not x["isBitnari"], -x["rssi"]))
                 self.send_event("scan_result", {"devices": device_list})
 
             try:

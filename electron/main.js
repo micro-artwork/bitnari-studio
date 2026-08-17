@@ -6,6 +6,7 @@ import {
   session,
   screen,
   Menu,
+  Tray,
 } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,6 +18,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 if (isDev) {
@@ -30,7 +33,65 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,LazyFrameLoading,TimeoutUI');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+function createTray() {
+  if (tray) return;
+
+  try {
+    const trayIconPath = path.join(__dirname, 'assets/bitnari-32.png');
+    tray = new Tray(trayIconPath);
+    tray.setToolTip('Bitnari Studio');
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Open Bitnari Studio',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]);
+
+    tray.setContextMenu(contextMenu);
+
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible()) {
+          mainWindow.focus();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+
+    tray.on('click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Main] Failed to create System Tray:', err);
+  }
+}
+
 function createWindow() {
+  const appIconPath = path.join(__dirname, 'assets/bitnari.ico');
+
   mainWindow = new BrowserWindow({
     width: 1460,
     height: 1085,
@@ -39,6 +100,7 @@ function createWindow() {
     backgroundColor: '#09090b',
     autoHideMenuBar: true,
     show: false,
+    icon: appIconPath,
     paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -51,6 +113,14 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+      return false;
+    }
   });
 
   const devUrl = 'http://localhost:5173';
@@ -185,13 +255,17 @@ app.whenReady().then(() => {
   };
 
   // UDP RPC Handlers
-  ipcMain.handle('udp:discover', async (_, targetIp, port, timeoutMs) => {
+  ipcMain.handle('udp:discover', async (event, targetIp, port, timeoutMs) => {
     if (typeof targetIp === 'number') {
       timeoutMs = port;
       port = targetIp;
       targetIp = null;
     }
-    return await udpService.discoverBoard(targetIp, port, timeoutMs);
+    return await udpService.discoverBoard(targetIp, port, timeoutMs, (progress) => {
+      try {
+        event.sender.send('udp:discover:progress', progress);
+      } catch (e) {}
+    });
   });
 
   ipcMain.handle('udp:connect', async (_, ip, port) => {
@@ -219,6 +293,7 @@ app.whenReady().then(() => {
   };
 
   createWindow();
+  createTray();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -228,7 +303,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isQuitting) {
     app.quit();
   }
 });

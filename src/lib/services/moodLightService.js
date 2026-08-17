@@ -18,11 +18,25 @@ export function sampleMoodLightColors(totalPixels = 182, config = {}) {
   const colors = [];
   cycleAngle = (cycleAngle + 0.02 * moodSpeed) % (Math.PI * 2);
 
-  // Calculate Breathing intensity multiplier (0.35 to 1.0)
-  const breathFactor =
-    moodEffect === 'Breathing'
-      ? 0.35 + 0.65 * ((Math.sin(cycleAngle) + 1) / 2)
-      : 1.0;
+  // Calculate dynamic effect intensity factor (0.05 to 1.0)
+  let effectFactor = 1.0;
+  if (moodEffect === 'Breathing') {
+    // Deep, soothing breathing sine curve (5% to 100%)
+    const sinVal = Math.sin(cycleAngle);
+    effectFactor = 0.05 + 0.95 * Math.pow((sinVal + 1) / 2, 1.6);
+  } else if (moodEffect === 'Pulse') {
+    // Crisp double-beat heartbeat pulse (Thump-Thump)
+    const t = ((cycleAngle * 2) % (Math.PI * 2)) / (Math.PI * 2); // 0 to 1
+    if (t < 0.15) {
+      effectFactor = 0.05 + 0.95 * Math.sin((t / 0.15) * Math.PI);
+    } else if (t >= 0.20 && t < 0.35) {
+      effectFactor = 0.05 + 0.55 * Math.sin(((t - 0.20) / 0.15) * Math.PI);
+    } else {
+      effectFactor = 0.05;
+    }
+  } else if (moodEffect === 'Static') {
+    effectFactor = 1.0;
+  }
 
   let baseRgb = { r: 255, g: 183, b: 77 }; // Warm White default
 
@@ -39,22 +53,34 @@ export function sampleMoodLightColors(totalPixels = 182, config = {}) {
   }
 
   for (let i = 0; i < totalPixels; i++) {
-    if (moodEffect === 'RainbowCycle' || moodPreset === 'Rainbow') {
-      const hue = ((i / totalPixels) * 360 + cycleAngle * 50) % 360;
-      const rgb = hslToRgb(hue / 360, 0.95, 0.5 * breathFactor);
+    const normPos = i / totalPixels;
+
+    if (moodPreset === 'Rainbow') {
+      const hue = ((normPos * 360) + (cycleAngle * 50)) % 360;
+      const lightness = moodEffect === 'Wave'
+        ? 0.15 + 0.70 * (Math.sin(normPos * Math.PI * 2 - cycleAngle * 2) * 0.5 + 0.5)
+        : 0.5 * effectFactor;
+      const rgb = hslToRgb(hue / 360, 0.95, lightness);
       colors.push(rgb);
     } else if (moodPreset === 'Cyberpunk') {
       // Gradient between Cyan (06b6d4) and Pink (ec4899)
-      const ratio = i / totalPixels;
-      const r = Math.round((236 * ratio + 6 * (1 - ratio)) * breathFactor);
-      const g = Math.round((72 * ratio + 182 * (1 - ratio)) * breathFactor);
-      const b = Math.round((153 * ratio + 212 * (1 - ratio)) * breathFactor);
+      const ratio = moodEffect === 'Wave'
+        ? (Math.sin(normPos * Math.PI * 2 - cycleAngle * 2) * 0.5 + 0.5)
+        : normPos;
+      const factor = moodEffect === 'Wave' ? 1.0 : effectFactor;
+      const r = Math.round((236 * ratio + 6 * (1 - ratio)) * factor);
+      const g = Math.round((72 * ratio + 182 * (1 - ratio)) * factor);
+      const b = Math.round((153 * ratio + 212 * (1 - ratio)) * factor);
       colors.push({ r, g, b });
     } else {
+      // Single color presets & Custom color
+      const factor = moodEffect === 'Wave'
+        ? 0.10 + 0.90 * Math.pow(Math.sin(normPos * Math.PI * 2 - cycleAngle * 2) * 0.5 + 0.5, 2.0)
+        : effectFactor;
       colors.push({
-        r: Math.round(baseRgb.r * breathFactor),
-        g: Math.round(baseRgb.g * breathFactor),
-        b: Math.round(baseRgb.b * breathFactor),
+        r: Math.round(baseRgb.r * factor),
+        g: Math.round(baseRgb.g * factor),
+        b: Math.round(baseRgb.b * factor),
       });
     }
   }
@@ -62,22 +88,56 @@ export function sampleMoodLightColors(totalPixels = 182, config = {}) {
   return colors;
 }
 
+function getPixelXWeight(index, totalPixels, config) {
+  const top = config.topPixels || 58;
+  const right = config.rightPixels || 33;
+  const bottom = config.bottomPixels || 58;
+  const left = config.leftPixels || 33;
+
+  if (index < top) {
+    return index / Math.max(1, top - 1);
+  } else if (index < top + right) {
+    return 1.0;
+  } else if (index < top + right + bottom) {
+    return 1.0 - (index - (top + right)) / Math.max(1, bottom - 1);
+  } else {
+    return 0.0;
+  }
+}
+
 /**
- * Generates reactive Audio Spectrum Visualizer LED colors
+ * Generates reactive Audio Spectrum Visualizer LED colors with Stereo Spatial Mapping
  */
 export function sampleAudioRhythmColors(
   totalPixels = 182,
   config = {},
   audioData = {},
 ) {
-  const { bass = 0, mid = 0, treble = 0, volume = 0 } = audioData;
-  const { audioPalette = 'Party' } = config; // 'Party' | 'Neon' | 'Fire' | 'Ocean'
+  const { bass = 0, mid = 0, treble = 0, volume = 0, left = null, right = null } = audioData;
+  const { audioPalette = 'Party', audioStereoMode = true } = config; // 'Party' | 'Neon' | 'Fire' | 'Ocean'
 
   const colors = [];
   cycleAngle = (cycleAngle + 0.05 * (1 + bass * 2)) % (Math.PI * 2);
 
+  const leftData = left || audioData;
+  const rightData = right || audioData;
+
   for (let i = 0; i < totalPixels; i++) {
     const normPos = i / totalPixels;
+
+    // Stereo Spatial Left/Right Interpolation
+    let curBass = bass;
+    let curMid = mid;
+    let curTreble = treble;
+    let curVolume = volume;
+
+    if (audioStereoMode) {
+      const xWeight = getPixelXWeight(i, totalPixels, config);
+      curBass = leftData.bass * (1 - xWeight) + rightData.bass * xWeight;
+      curMid = leftData.mid * (1 - xWeight) + rightData.mid * xWeight;
+      curTreble = leftData.treble * (1 - xWeight) + rightData.treble * xWeight;
+      curVolume = leftData.volume * (1 - xWeight) + rightData.volume * xWeight;
+    }
 
     let r = 0,
       g = 0,
@@ -87,33 +147,33 @@ export function sampleAudioRhythmColors(
       // Bass drives intense Red/Orange flame pulses
       const intensity = Math.min(
         1.0,
-        bass * 1.5 + Math.sin(normPos * Math.PI * 4 + cycleAngle) * 0.3,
+        curBass * 1.5 + Math.sin(normPos * Math.PI * 4 + cycleAngle) * 0.3,
       );
       r = Math.round(255 * intensity);
-      g = Math.round(100 * intensity * mid);
-      b = Math.round(30 * treble);
+      g = Math.round(100 * intensity * curMid);
+      b = Math.round(30 * curTreble);
     } else if (audioPalette === 'Ocean') {
       // Deep Blue & Cyan waves driven by Mid and Bass
       const wave = Math.sin(normPos * Math.PI * 6 + cycleAngle) * 0.5 + 0.5;
-      r = Math.round(20 * treble);
-      g = Math.round((100 + 155 * wave) * mid);
-      b = Math.round((180 + 75 * bass) * (0.4 + wave * 0.6));
+      r = Math.round(20 * curTreble);
+      g = Math.round((100 + 155 * wave) * curMid);
+      b = Math.round((180 + 75 * curBass) * (0.4 + wave * 0.6));
     } else if (audioPalette === 'Neon') {
       // Cyberpunk Cyan & Magenta reactive pulses
-      const isBassCenter = Math.abs(normPos - 0.5) < bass * 0.4;
+      const isBassCenter = Math.abs(normPos - 0.5) < curBass * 0.4;
       if (isBassCenter) {
-        r = Math.round(255 * bass);
+        r = Math.round(255 * curBass);
         g = 0;
-        b = Math.round(255 * bass);
+        b = Math.round(255 * curBass);
       } else {
         r = 0;
-        g = Math.round(230 * mid);
-        b = Math.round(255 * (0.3 + treble * 0.7));
+        g = Math.round(230 * curMid);
+        b = Math.round(255 * (0.3 + curTreble * 0.7));
       }
     } else {
       // Default 'Party' Rainbow Audio Equalizer
       const hue = (normPos * 360 + cycleAngle * 40) % 360;
-      const brightness = 0.2 + volume * 0.8;
+      const brightness = 0.2 + curVolume * 0.8;
       const rgb = hslToRgb(hue / 360, 0.95, Math.min(1.0, brightness));
       r = rgb.r;
       g = rgb.g;

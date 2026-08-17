@@ -177,6 +177,26 @@ export async function initAudioCapture(
     sourceNode.connect(analyser);
     freqData = new Uint8Array(analyser.frequencyBinCount);
 
+    // 2. Stereo Channel Splitter (Left: Channel 0, Right: Channel 1)
+    try {
+      splitterNode = audioCtx.createChannelSplitter(2);
+      analyserLeft = audioCtx.createAnalyser();
+      analyserRight = audioCtx.createAnalyser();
+      analyserLeft.fftSize = 256;
+      analyserRight.fftSize = 256;
+      analyserLeft.smoothingTimeConstant = 0.7;
+      analyserRight.smoothingTimeConstant = 0.7;
+
+      sourceNode.connect(splitterNode);
+      splitterNode.connect(analyserLeft, 0);
+      splitterNode.connect(analyserRight, 1);
+
+      freqDataLeft = new Uint8Array(analyserLeft.frequencyBinCount);
+      freqDataRight = new Uint8Array(analyserRight.frequencyBinCount);
+    } catch (e) {
+      console.warn('[AudioService] Stereo splitter fallback to mono:', e);
+    }
+
     console.log(
       `[AudioService] Audio spectrum engine initialized! Bins: ${analyser.frequencyBinCount}`,
     );
@@ -191,9 +211,23 @@ export async function initAudioCapture(
   }
 }
 
+let splitterNode = null;
+let analyserLeft = null;
+let analyserRight = null;
+let freqDataLeft = null;
+let freqDataRight = null;
+
 let bassAvgTracker = 0.2;
 let midAvgTracker = 0.25;
 let trebleAvgTracker = 0.1;
+
+let leftBassAvgTracker = 0.2;
+let leftMidAvgTracker = 0.25;
+let leftTrebleAvgTracker = 0.1;
+
+let rightBassAvgTracker = 0.2;
+let rightMidAvgTracker = 0.25;
+let rightTrebleAvgTracker = 0.1;
 
 export function stopAudioCapture() {
   if (mediaStream) {
@@ -206,7 +240,15 @@ export function stopAudioCapture() {
     } catch (e) {}
     sourceNode = null;
   }
+  if (splitterNode) {
+    try {
+      splitterNode.disconnect();
+    } catch (e) {}
+    splitterNode = null;
+  }
   analyser = null;
+  analyserLeft = null;
+  analyserRight = null;
   if (audioCtx && audioCtx.state !== 'closed') {
     try {
       audioCtx.close();
@@ -214,9 +256,51 @@ export function stopAudioCapture() {
     audioCtx = null;
   }
   freqData = null;
+  freqDataLeft = null;
+  freqDataRight = null;
   bassAvgTracker = 0.2;
   midAvgTracker = 0.25;
   trebleAvgTracker = 0.1;
+}
+
+function analyzeBuffer(fData, trackers, sensitivity) {
+  if (!fData || fData.length === 0) {
+    return { bass: 0, mid: 0, treble: 0, volume: 0 };
+  }
+  const binCount = fData.length;
+  const bassBins = Math.max(1, Math.floor(binCount * 0.12));
+  const midBins = Math.max(bassBins + 1, Math.floor(binCount * 0.45));
+
+  let bassSum = 0;
+  for (let i = 0; i < bassBins; i++) bassSum += fData[i];
+  const rawBass = bassSum / (bassBins * 255);
+
+  let midSum = 0;
+  for (let i = bassBins; i < midBins; i++) midSum += fData[i];
+  const rawMid = midSum / ((midBins - bassBins) * 255);
+
+  let trebleSum = 0;
+  for (let i = midBins; i < binCount; i++) trebleSum += fData[i];
+  const rawTreble = trebleSum / ((binCount - midBins) * 255);
+
+  trackers.bass = trackers.bass * 0.96 + rawBass * 0.04;
+  trackers.mid = trackers.mid * 0.96 + rawMid * 0.04;
+  trackers.treble = trackers.treble * 0.96 + rawTreble * 0.04;
+
+  const bassGain = 0.5 / Math.max(0.04, trackers.bass);
+  const midGain = 0.5 / Math.max(0.04, trackers.mid);
+  const trebleGain = 0.5 / Math.max(0.04, trackers.treble);
+
+  const userSens = sensitivity / 1.5;
+  const bass = Math.min(1.0, rawBass * bassGain * userSens);
+  const mid = Math.min(1.0, rawMid * midGain * userSens);
+  const treble = Math.min(1.0, rawTreble * trebleGain * userSens);
+
+  let totalSum = 0;
+  for (let i = 0; i < binCount; i++) totalSum += fData[i];
+  const volume = Math.min(1.0, (totalSum / (binCount * 255)) * sensitivity);
+
+  return { bass, mid, treble, volume };
 }
 
 export function getAudioAnalysis(sensitivity = 1.5) {
@@ -231,53 +315,68 @@ export function getAudioAnalysis(sensitivity = 1.5) {
       treble: 0,
       volume: 0,
       freqData: new Uint8Array(0),
+      left: { bass: 0, mid: 0, treble: 0, volume: 0 },
+      right: { bass: 0, mid: 0, treble: 0, volume: 0 },
     };
   }
 
   analyser.getByteFrequencyData(freqData);
 
-  const binCount = freqData.length;
-  // Bins mapping (0-128 for 24kHz spectrum)
-  const bassBins = Math.max(1, Math.floor(binCount * 0.12)); // ~0-250Hz (Sub-bass & Bass)
-  const midBins = Math.max(bassBins + 1, Math.floor(binCount * 0.45)); // ~250Hz-4kHz (Mids & Vocals)
+  const unified = analyzeBuffer(
+    freqData,
+    {
+      get bass() { return bassAvgTracker; },
+      set bass(v) { bassAvgTracker = v; },
+      get mid() { return midAvgTracker; },
+      set mid(v) { midAvgTracker = v; },
+      get treble() { return trebleAvgTracker; },
+      set treble(v) { trebleAvgTracker = v; },
+    },
+    sensitivity,
+  );
 
-  let bassSum = 0;
-  for (let i = 0; i < bassBins; i++) {
-    bassSum += freqData[i];
+  let left = unified;
+  let right = unified;
+
+  if (analyserLeft && freqDataLeft) {
+    analyserLeft.getByteFrequencyData(freqDataLeft);
+    left = analyzeBuffer(
+      freqDataLeft,
+      {
+        get bass() { return leftBassAvgTracker; },
+        set bass(v) { leftBassAvgTracker = v; },
+        get mid() { return leftMidAvgTracker; },
+        set mid(v) { leftMidAvgTracker = v; },
+        get treble() { return leftTrebleAvgTracker; },
+        set treble(v) { leftTrebleAvgTracker = v; },
+      },
+      sensitivity,
+    );
   }
-  const rawBass = bassSum / (bassBins * 255);
 
-  let midSum = 0;
-  for (let i = bassBins; i < midBins; i++) {
-    midSum += freqData[i];
+  if (analyserRight && freqDataRight) {
+    analyserRight.getByteFrequencyData(freqDataRight);
+    right = analyzeBuffer(
+      freqDataRight,
+      {
+        get bass() { return rightBassAvgTracker; },
+        set bass(v) { rightBassAvgTracker = v; },
+        get mid() { return rightMidAvgTracker; },
+        set mid(v) { rightMidAvgTracker = v; },
+        get treble() { return rightTrebleAvgTracker; },
+        set treble(v) { rightTrebleAvgTracker = v; },
+      },
+      sensitivity,
+    );
   }
-  const rawMid = midSum / ((midBins - bassBins) * 255);
 
-  let trebleSum = 0;
-  for (let i = midBins; i < binCount; i++) {
-    trebleSum += freqData[i];
-  }
-  const rawTreble = trebleSum / ((binCount - midBins) * 255);
-
-  // Dynamic AGC Auto-Centering (Exponential Moving Average Peak Tracker)
-  bassAvgTracker = bassAvgTracker * 0.96 + rawBass * 0.04;
-  midAvgTracker = midAvgTracker * 0.96 + rawMid * 0.04;
-  trebleAvgTracker = trebleAvgTracker * 0.96 + rawTreble * 0.04;
-
-  const bassGain = 0.5 / Math.max(0.04, bassAvgTracker);
-  const midGain = 0.5 / Math.max(0.04, midAvgTracker);
-  const trebleGain = 0.5 / Math.max(0.04, trebleAvgTracker);
-
-  const userSens = sensitivity / 1.5;
-  const bass = Math.min(1.0, rawBass * bassGain * userSens);
-  const mid = Math.min(1.0, rawMid * midGain * userSens);
-  const treble = Math.min(1.0, rawTreble * trebleGain * userSens);
-
-  let totalSum = 0;
-  for (let i = 0; i < binCount; i++) {
-    totalSum += freqData[i];
-  }
-  const volume = Math.min(1.0, (totalSum / (binCount * 255)) * sensitivity);
-
-  return { bass, mid, treble, volume, freqData };
+  return {
+    bass: unified.bass,
+    mid: unified.mid,
+    treble: unified.treble,
+    volume: unified.volume,
+    freqData,
+    left,
+    right,
+  };
 }

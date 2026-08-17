@@ -12,58 +12,70 @@ class UdpService {
     /**
      * Broadcasts WindRPC PING (0x0601) to 255.255.255.255, subnet broadcast, and optional targetIp to find connected board.
      */
-    async discoverBoard(targetIp = null, port = 5000, timeoutMs = 3500) {
+    async discoverBoard(targetIp = null, port = 5000, timeoutMs = 4500, onProgress = null) {
         return new Promise((resolve) => {
             const probeSocket = dgram.createSocket('udp4');
             let isResolved = false;
+            let sweepTimer = null;
 
             const cleanup = () => {
+                if (sweepTimer) {
+                    clearInterval(sweepTimer);
+                    sweepTimer = null;
+                }
                 try {
                     probeSocket.close();
                 } catch (e) {}
             };
 
-            const timer = setTimeout(() => {
+            const overallTimer = setTimeout(() => {
                 if (!isResolved) {
                     isResolved = true;
                     cleanup();
-                    resolve({ success: false, error: 'UDP discovery timed out' });
+                    resolve({ success: false, error: 'No Bitnari Wi-Fi Server detected' });
                 }
             }, timeoutMs);
 
             probeSocket.on('error', (err) => {
-                console.error('[UdpService] Probe error:', err);
-                if (!isResolved) {
-                    isResolved = true;
-                    clearTimeout(timer);
-                    cleanup();
-                    resolve({ success: false, error: err.message });
+                if (err.code === 'EADDRINUSE') {
+                    console.error('[UdpService] Probe socket bind error (Port in use):', err.message);
+                } else {
+                    console.debug('[UdpService] Subnet probe socket notice:', err.message);
                 }
             });
 
             probeSocket.on('message', (msg, rinfo) => {
-                if (!isResolved && msg && msg.length >= 5) {
+                if (!isResolved && msg && msg.length >= 6) {
                     isResolved = true;
-                    clearTimeout(timer);
+                    clearTimeout(overallTimer);
                     console.log(`[UdpService] Discovered board at ${rinfo.address}:${rinfo.port}`);
-                    cleanup();
-                    resolve({
-                        success: true,
-                        ip: rinfo.address,
-                        port: rinfo.port || port
-                    });
+                    if (onProgress && typeof onProgress === 'function') {
+                        onProgress({
+                            found: { ip: rinfo.address, port: rinfo.port || port },
+                            percent: 100,
+                            status: `Found Bitnari Board: ${rinfo.address}:${rinfo.port || port}`
+                        });
+                    }
+                    setTimeout(() => {
+                        cleanup();
+                        resolve({
+                            success: true,
+                            ip: rinfo.address,
+                            port: rinfo.port || port
+                        });
+                    }, 250);
                 }
             });
 
             probeSocket.bind(() => {
                 try {
                     probeSocket.setBroadcast(true);
-                    // Raw WindRPC PING datagram (5 bytes: 06 01 00 01 00 - RPC 0x0601, SEQ 0x0001, LEN 0)
-                    const pingFrame = Buffer.from([0x06, 0x01, 0x00, 0x01, 0x00]);
+                    const pingFrame = Buffer.from([0x01, 0x06, 0x01, 0x00, 0x00, 0x00]);
 
-                    const targets = new Set(['255.255.255.255']);
+                    const targetList = [];
+                    targetList.push('255.255.255.255');
                     if (targetIp) {
-                        targets.add(targetIp);
+                        targetList.push(targetIp);
                     }
 
                     const interfaces = os.networkInterfaces();
@@ -72,24 +84,49 @@ class UdpService {
                             if (net.family === 'IPv4' && !net.internal) {
                                 const parts = net.address.split('.');
                                 if (parts.length === 4) {
-                                    targets.add(`${parts[0]}.${parts[1]}.${parts[2]}.255`);
-                                    targets.add(`${parts[0]}.${parts[1]}.255.255`);
+                                    const subnet = `${parts[0]}.${parts[1]}.${parts[2]}`;
+                                    targetList.push(`${subnet}.255`);
+                                    for (let i = 1; i <= 254; i++) {
+                                        targetList.push(`${subnet}.${i}`);
+                                    }
                                 }
                             }
                         }
                     }
 
-                    for (const targetHost of targets) {
-                        probeSocket.send(pingFrame, 0, pingFrame.length, port, targetHost, (err) => {
-                            if (err) {
-                                // Ignore socket errors for invalid broadcast addresses
-                            }
-                        });
-                    }
+                    const uniqueTargets = [...new Set(targetList)];
+                    let currentIndex = 0;
+                    const batchSize = 10;
+
+                    sweepTimer = setInterval(() => {
+                        if (isResolved || currentIndex >= uniqueTargets.length) {
+                            clearInterval(sweepTimer);
+                            sweepTimer = null;
+                            return;
+                        }
+
+                        const batch = uniqueTargets.slice(currentIndex, currentIndex + batchSize);
+                        currentIndex += batch.length;
+                        const percent = Math.min(99, Math.round((currentIndex / uniqueTargets.length) * 100));
+
+                        for (const host of batch) {
+                            probeSocket.send(pingFrame, 0, pingFrame.length, port, host, () => {});
+                        }
+
+                        if (onProgress && typeof onProgress === 'function') {
+                            onProgress({
+                                currentIp: batch[batch.length - 1],
+                                scanned: currentIndex,
+                                total: uniqueTargets.length,
+                                percent,
+                                status: `Probing ${batch[batch.length - 1]} (${currentIndex}/${uniqueTargets.length})`
+                            });
+                        }
+                    }, 25);
                 } catch (err) {
                     if (!isResolved) {
                         isResolved = true;
-                        clearTimeout(timer);
+                        clearTimeout(overallTimer);
                         cleanup();
                         resolve({ success: false, error: err.message });
                     }
