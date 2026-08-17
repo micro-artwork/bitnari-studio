@@ -153,7 +153,7 @@ def call_gemini_model(model_name: str, diff: str) -> str:
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 8192,
         },
     }
     data = json.dumps(payload).encode()
@@ -165,7 +165,13 @@ def call_gemini_model(model_name: str, diff: str) -> str:
     )
     with urllib.request.urlopen(req) as resp:
         result = json.loads(resp.read())
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = result.get("candidates", [{}])[0]
+        content_parts = candidate.get("content", {}).get("parts", [])
+        full_text = "".join(part.get("text", "") for part in content_parts)
+        if not full_text:
+            finish_reason = candidate.get("finishReason", "UNKNOWN")
+            full_text = f"*(Review text was empty or filtered by API. Finish reason: `{finish_reason}`)*"
+        return full_text
 
 
 def call_gemini(diff: str) -> tuple[str, str]:
