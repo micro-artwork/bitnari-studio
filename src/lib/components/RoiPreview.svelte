@@ -2,7 +2,7 @@
 	import { configStore } from '../stores/configStore.svelte.js';
 	import { Zap } from 'lucide-svelte';
 
-	// Compute continuous LED perimeter ring matching C# HilightBox 1:1 geometry
+	// Compute continuous LED perimeter ring matching Bitnari Studio geometry
 	let ledLayout = $derived.by(() => {
 		const T = (configStore.topAvailable ?? true) ? (configStore.topPixels || 0) : 0;
 		const R = (configStore.rightAvailable ?? true) ? (configStore.rightPixels || 0) : 0;

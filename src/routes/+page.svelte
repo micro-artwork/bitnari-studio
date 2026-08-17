@@ -356,6 +356,7 @@
 	}
 
 	async function refreshSerialPorts() {
+		if (configStore.isConnected) return;
 		if (window.api && window.api.listPorts) {
 			try {
 				console.log('[Frontend] Requesting serial ports from Electron main process...');
@@ -1015,8 +1016,9 @@
 
 				{#if activeTransportTab === 'usb'}
 					<button 
+						disabled={configStore.isConnected}
 						onclick={refreshSerialPorts}
-						class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 titlebar-no-drag cursor-pointer"
+						class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-400"
 					>
 						<RefreshCw class="w-3 h-3" /> 
 						Scan / Refresh
@@ -1024,8 +1026,8 @@
 				{:else}
 					<button 
 						onclick={handleUdpDiscovery}
-						disabled={isUdpSearching}
-						class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-50"
+						disabled={isUdpSearching || configStore.isConnected}
+						class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 titlebar-no-drag cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-indigo-400"
 					>
 						<RefreshCw class="w-3 h-3 {isUdpSearching ? 'animate-spin' : ''}" /> 
 						<span>{isUdpSearching ? 'Searching...' : 'Discover Server'}</span>
@@ -1395,12 +1397,12 @@
 						aria-label="Toggle Stereo Spatial Mapping"
 						aria-checked={configStore.audioStereoMode}
 						onclick={() => configStore.audioStereoMode = !configStore.audioStereoMode}
-						class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
-						{configStore.audioStereoMode ? 'bg-pink-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
+						class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
+						{configStore.audioStereoMode ? 'bg-indigo-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
 					>
 						<span 
-							class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
-							{configStore.audioStereoMode ? 'translate-x-4' : 'translate-x-0'}"
+							class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+							{configStore.audioStereoMode ? 'translate-x-5' : 'translate-x-0'}"
 						></span>
 					</button>
 				</div>
@@ -1527,7 +1529,7 @@
 					</div>
 				</div>
 
-				<!-- LED Strip Position Configuration Table (1:1 Ported from C# HilightBox) -->
+				<!-- LED Strip Position Configuration Table -->
 				<div class="flex flex-col gap-2.5 p-4 bg-zinc-900/60 border border-zinc-800/80 rounded-xl">
 					<div class="flex items-center justify-between border-b border-zinc-800 pb-2 text-xs font-semibold text-zinc-400 px-1">
 						<span>LED Strip Side</span>
@@ -1824,12 +1826,12 @@
 							aria-label="Toggle Gamma Calibration"
 							aria-checked={configStore.gammaEnabled}
 							onclick={() => configStore.gammaEnabled = !configStore.gammaEnabled}
-							class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
-							{configStore.gammaEnabled ? 'bg-purple-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
+							class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none titlebar-no-drag shadow-inner
+							{configStore.gammaEnabled ? 'bg-indigo-600' : 'bg-zinc-700 hover:bg-zinc-600'}"
 						>
 							<span 
-								class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
-								{configStore.gammaEnabled ? 'translate-x-4' : 'translate-x-0'}"
+								class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+								{configStore.gammaEnabled ? 'translate-x-5' : 'translate-x-0'}"
 							></span>
 						</button>
 					</div>
