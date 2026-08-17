@@ -36,7 +36,7 @@
 	let activeTransportTab = $state('usb'); // 'usb' | 'udp'
 	let isUdpSearching = $state(false);
 
-	let gammaTable = $derived.by(() => {
+	let currentGammaTable = $derived.by(() => {
 		if (!configStore.gammaEnabled) return null;
 		return GammaRgb.createTable(configStore.gammaR, configStore.gammaG, configStore.gammaB);
 	});
