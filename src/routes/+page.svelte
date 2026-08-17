@@ -1163,7 +1163,7 @@
 					<span class="w-2 h-2 rounded-full {configStore.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}"></span>
 					<span>
 						{#if configStore.isConnected}
-							<strong class="text-zinc-200">Connected:</strong> {configStore.connectionType} {configStore.connectionType === 'UDP' && discoveredUdpTarget ? `(${discoveredUdpTarget.ip})` : ''}
+							<strong class="text-zinc-200">Connected:</strong> {configStore.connectionType} {configStore.connectionType === 'UDP' && configStore.targetUdpIp ? `(${configStore.targetUdpIp}:${configStore.targetUdpPort || 5000})` : ''}
 						{:else}
 							<strong class="text-zinc-400">Status:</strong> Disconnected
 						{/if}
