@@ -7,7 +7,6 @@ import {
   screen,
   Menu,
   Tray,
-  nativeImage,
 } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
