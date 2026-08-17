@@ -37,8 +37,11 @@ class UdpService {
             }, timeoutMs);
 
             probeSocket.on('error', (err) => {
-                // Expected non-fatal network unreachable warnings during subnet sweep
-                console.debug('[UdpService] Subnet probe socket notice:', err.message);
+                if (err.code === 'EADDRINUSE') {
+                    console.error('[UdpService] Probe socket bind error (Port in use):', err.message);
+                } else {
+                    console.debug('[UdpService] Subnet probe socket notice:', err.message);
+                }
             });
 
             probeSocket.on('message', (msg, rinfo) => {
