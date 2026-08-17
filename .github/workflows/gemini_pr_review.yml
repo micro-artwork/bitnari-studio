@@ -42,7 +42,7 @@ jobs:
       - name: Run Gemini Review
         env:
           GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL:    ${{ vars.GEMINI_MODEL || 'gemini-2.5-pro' }}
+          GEMINI_MODEL:    ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           GITHUB_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER:       ${{ github.event.pull_request.number }}
           REPO_FULL_NAME:  ${{ github.repository }}
@@ -105,7 +105,7 @@ jobs:
       - name: Run Gemini Review
         env:
           GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL:    ${{ vars.GEMINI_MODEL || 'gemini-2.5-pro' }}
+          GEMINI_MODEL:    ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
           GITHUB_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER:       ${{ github.event.issue.number }}
           REPO_FULL_NAME:  ${{ github.repository }}

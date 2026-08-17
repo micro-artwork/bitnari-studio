@@ -40,9 +40,9 @@ if not GITHUB_TOKEN:
     print("ERROR: GITHUB_TOKEN is not available.", file=sys.stderr)
     sys.exit(1)
 
-# Model selection: Defaults to "gemini-2.5-pro" (or override via GEMINI_MODEL env var)
-# Available models: "gemini-2.5-pro" (deepest reasoning), "gemini-2.5-flash" (fast), "gemini-2.0-pro-exp-02-05", etc.
-GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro").strip()
+# Model selection: Defaults to "gemini-2.5-flash" (generous free-tier quota & fast analysis)
+# Available models: "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", etc.
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
 MAX_DIFF_CHARS = 100_000  # Truncate very large diffs to stay within token limits
 
 # Files to skip reviewing (generated, lock files, binary assets, etc.)
@@ -139,16 +139,14 @@ Be concise. Cite file paths and line numbers when possible.
 """
 
 
-def call_gemini(diff: str) -> str:
-    """Send diff to Gemini and return the review text."""
+def call_gemini_model(model_name: str, diff: str) -> str:
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + "\n\n[... diff truncated for length ...]"
 
     prompt = f"Please review the following pull request diff:\n\n```diff\n{diff}\n```"
-
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        f"{model_name}:generateContent?key={GEMINI_API_KEY}"
     )
     payload = {
         "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
@@ -165,14 +163,47 @@ def call_gemini(diff: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-    except urllib.error.HTTPError as e:
-        err = e.read().decode()
-        print(f"Gemini API error {e.code}: {err}", file=sys.stderr)
-        sys.exit(1)
+    with urllib.request.urlopen(req) as resp:
+        result = json.loads(resp.read())
+        return result["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def call_gemini(diff: str) -> tuple[str, str]:
+    """Send diff to Gemini with automatic model fallback."""
+    models_to_try = [GEMINI_MODEL]
+    if "gemini-2.5-flash" not in models_to_try:
+        models_to_try.append("gemini-2.5-flash")
+    if "gemini-1.5-flash" not in models_to_try:
+        models_to_try.append("gemini-1.5-flash")
+
+    last_err = ""
+    for model in models_to_try:
+        try:
+            print(f"Calling Gemini model '{model}'...")
+            review_text = call_gemini_model(model, diff)
+            return review_text, model
+        except urllib.error.HTTPError as e:
+            err_text = e.read().decode("utf-8", errors="replace")
+            print(f"Model '{model}' returned HTTP {e.code}: {err_text[:200]}...", file=sys.stderr)
+            last_err = f"HTTP {e.code}: {err_text}"
+            if e.code == 429:
+                print(f"Quota exceeded for '{model}'. Trying fallback model...", file=sys.stderr)
+                continue
+            else:
+                break
+        except Exception as ex:
+            print(f"Model '{model}' exception: {ex}", file=sys.stderr)
+            last_err = str(ex)
+            break
+
+    # If all models failed due to quota or network
+    return (
+        f"⚠️ **Gemini Review Skipped Due to API Quota Limit**\n\n"
+        f"Could not complete automated review because API quota was exceeded on the Google AI Studio Free Tier.\n\n"
+        f"```\n{last_err[:500]}\n```\n\n"
+        f"💡 *Tip: Comment `/gemini review` after a short cooldown or switch to a paid API tier.*",
+        "gemini-fallback"
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -190,11 +221,11 @@ def main():
         return
 
     print(f"Diff size: {len(filtered):,} chars. Calling Gemini ({GEMINI_MODEL})...")
-    review = call_gemini(filtered)
+    review, used_model = call_gemini(filtered)
 
     comment = (
         f"## 🤖 Gemini Code Review\n\n"
-        f"> Model: `{GEMINI_MODEL}` &nbsp;|&nbsp; "
+        f"> Model: `{used_model}` &nbsp;|&nbsp; "
         f"Trigger: automated on PR &nbsp;|&nbsp; "
         f"[Re-run: comment `/gemini review`]\n\n"
         f"---\n\n"
