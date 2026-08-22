@@ -68,13 +68,38 @@ Electron 메인 프로세스 및 SvelteKit 프론트엔드 개발 서버를 동�
 npm run dev
 ```
 
-### 앱 빌드 (Build)
+### 단위 테스트 (Test)
 
-프로덕션 배포용 번들을 빌드합니다:
+단위 테스트 스위트를 실행합니다:
+
+```bash
+npm run test
+```
+
+### 프론트엔드 정적 빌드 (Build Frontend)
+
+SvelteKit 정적 배포용 번들을 빌드합니다:
 
 ```bash
 npm run build
 ```
+
+### Windows 실행 파일 패키징 (Package Executables)
+
+`electron-builder`를 사용하여 Windows 실행 파일 및 설치 프로그램을 패키징합니다:
+
+```bash
+# Windows 설치 프로그램(NSIS) 및 포터블 단일 실행 파일 빌드 (dist/에 생성)
+npm run dist
+
+# 빠른 로컬 테스트용 무설치 디렉터리 실행 파일 빌드
+npm run dist:dir
+```
+
+#### 빌드 결과물 (`dist/`):
+- **설치 프로그램 (NSIS)**: `dist/Bitnari Studio Setup <version>.exe`
+- **단일 포터블 실행 파일**: `dist/Bitnari Studio <version>.exe`
+- **무설치 디렉터리 실행 파일**: `dist/win-unpacked/Bitnari Studio.exe`
 
 ---
 

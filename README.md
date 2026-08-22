@@ -70,13 +70,38 @@ Runs the Electron main process and SvelteKit frontend dev server concurrently:
 npm run dev
 ```
 
-### Build Application
+### Test
 
-Builds the production deployment bundle:
+Runs the unit test suite:
+
+```bash
+npm run test
+```
+
+### Build Frontend (Static Bundle)
+
+Builds the static SvelteKit production bundle:
 
 ```bash
 npm run build
 ```
+
+### Package Windows Executables
+
+Packages the application into Windows executable binaries via `electron-builder`:
+
+```bash
+# Build Windows NSIS installer & single portable executable into dist/
+npm run dist
+
+# Build unpacked standalone directory for fast local testing
+npm run dist:dir
+```
+
+#### Output Binaries (`dist/`):
+- **Installer (NSIS)**: `dist/Bitnari Studio Setup <version>.exe`
+- **Portable**: `dist/Bitnari Studio <version>.exe`
+- **Unpacked Standalone**: `dist/win-unpacked/Bitnari Studio.exe`
 
 ---
 
