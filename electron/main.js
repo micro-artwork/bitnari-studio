@@ -7,15 +7,31 @@ import {
   screen,
   Menu,
   Tray,
+  protocol,
+  net,
 } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { serialService } from './serialService.js';
 import { bleService } from './bleService.js';
 import { udpService } from './udpService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Register privileged custom scheme for SvelteKit SPA routing in production
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
 
 let mainWindow = null;
 let tray = null;
@@ -124,7 +140,7 @@ function createWindow() {
   });
 
   const devUrl = 'http://localhost:5173';
-  const prodFile = path.join(__dirname, '../build/index.html');
+  const prodUrl = 'app://localhost/';
 
   if (isDev) {
     mainWindow.loadURL(devUrl).catch(() => {
@@ -137,7 +153,7 @@ function createWindow() {
       setTimeout(() => mainWindow?.loadURL(devUrl), 1000);
     });
   } else {
-    mainWindow.loadFile(prodFile);
+    mainWindow.loadURL(prodUrl);
   }
 
   mainWindow.on('closed', () => {
@@ -146,6 +162,22 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Handle custom privileged 'app://' protocol to cleanly serve SvelteKit static SPA build
+  protocol.handle('app', (request) => {
+    try {
+      const url = new URL(request.url);
+      let pathname = decodeURIComponent(url.pathname);
+      if (pathname === '/' || pathname === '') {
+        pathname = '/index.html';
+      }
+      const filePath = path.join(__dirname, '../build', pathname);
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (err) {
+      console.error('[Protocol app://] Failed to handle asset request:', request.url, err);
+      return new Response('File not found or protocol error', { status: 404 });
+    }
+  });
+
   // Remove default top window menu bar (File, Edit, View, Window, Help)
   Menu.setApplicationMenu(null);
 

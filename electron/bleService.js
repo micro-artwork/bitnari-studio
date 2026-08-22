@@ -27,7 +27,7 @@ class BleService {
             return;
         }
 
-        const scriptPath = path.join(__dirname, 'ble_bridge.py');
+        const scriptPath = path.join(__dirname, 'ble_bridge.py').replace('app.asar', 'app.asar.unpacked');
         const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
 
         console.log(`[BleService] Spawning Python BLE Bridge: ${pythonBin} ${scriptPath}`);
