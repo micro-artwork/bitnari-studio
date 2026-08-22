@@ -2,6 +2,7 @@
   "name": "bitnari-electron",
   "version": "0.1.0",
   "description": "Ambilight Desktop Control Application built with Electron, SvelteKit, and bits-ui",
+  "author": "Bitnari",
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
@@ -10,9 +11,54 @@
     "dev": "concurrently -k \"npm run dev:svelte\" \"npm run dev:electron\"",
     "build:svelte": "vite build",
     "build": "npm run build:svelte",
+    "dist": "npm run build:svelte && electron-builder --win",
+    "dist:dir": "npm run build:svelte && electron-builder --win --dir",
+    "pack": "npm run build:svelte && electron-builder --win --dir",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "build": {
+    "appId": "com.bitnari.studio",
+    "productName": "Bitnari Studio",
+    "copyright": "Copyright © 2026 Bitnari",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "build/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "electron/ble_bridge.py",
+      "electron/assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/bitnari.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Bitnari Studio"
+    }
   },
   "dependencies": {
     "bits-ui": "^1.8.0",
@@ -31,6 +77,7 @@
     "concurrently": "^9.2.4",
     "cross-env": "^7.0.3",
     "electron": "^35.0.0",
+    "electron-builder": "^26.15.3",
     "svelte": "^5.56.9",
     "tailwindcss": "^4.0.9",
     "typescript": "^5.9.3",
