@@ -191,12 +191,15 @@
 
 	// Rolling peak/average tracker for 16 visualizer bars for Dynamic AGC Centering
 	let barPeakTracker = new Array(16).fill(0.2);
+	let audioBarHeights = $state([25, 40, 20, 55, 35, 30, 60, 45, 35, 70, 40, 25, 45, 30, 20, 35]);
 
-	let audioBarHeights = $derived.by(() => {
+	function updateAudioVisualizer(analysis) {
 		if (!configStore.isRunning || configStore.syncMode !== 'AudioSync') {
-			return [25, 40, 20, 55, 35, 30, 60, 45, 35, 70, 40, 25, 45, 30, 20, 35];
+			audioBarHeights = [25, 40, 20, 55, 35, 30, 60, 45, 35, 70, 40, 25, 45, 30, 20, 35];
+			return;
 		}
-		const { freqData, bass, mid, treble, volume } = liveAudioAnalysis;
+
+		const { freqData, bass, mid, treble, volume } = analysis;
 
 		if (freqData && freqData.length > 0) {
 			const numBars = 16;
@@ -225,11 +228,12 @@
 
 				heights.push(Math.max(12, Math.min(95, Math.round(normalizedVal * 75 + 12))));
 			}
-			return heights;
+			audioBarHeights = heights;
+			return;
 		}
 
 		// Fallback if raw freqData array not available
-		return [
+		audioBarHeights = [
 			Math.max(12, Math.min(95, bass * 120 + 10)),
 			Math.max(12, Math.min(95, bass * 135 + 15)),
 			Math.max(12, Math.min(95, bass * 110 + 12)),
@@ -247,7 +251,7 @@
 			Math.max(12, Math.min(95, volume * 130 + 12)),
 			Math.max(12, Math.min(95, volume * 105 + 8))
 		];
-	});
+	}
 
 	async function handleUdpDiscovery() {
 		if (window.api && window.api.discoverUdpBoard) {
@@ -620,15 +624,23 @@
 		stopStreaming();
 		console.log(`[Streaming] Starting sync mode: "${configStore.syncMode}" (Session #${thisSession})...`);
 
+		// Grace period to allow OS/WASAPI media capture endpoints to release cleanly
+		await delay(50);
+		if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
+			return;
+		}
+
 		if (configStore.syncMode === 'ScreenSync') {
 			await initScreenCapture(configStore.selectedScreenId);
 		} else if (configStore.syncMode === 'AudioSync') {
 			await initAudioCapture(configStore.audioSource, configStore.selectedAudioDeviceId);
 		}
 
-		// Clean cancellation if user switched mode again while async capture initialization was in flight
+		// Clean cancellation if user switched mode again or stopped while async capture initialization was in flight
 		if (thisSession !== streamSessionId || !configStore.isRunning || !configStore.isConnected) {
 			console.log(`[Streaming] Stale session #${thisSession} aborted cleanly.`);
+			stopScreenCapture();
+			stopAudioCapture();
 			return;
 		}
 
@@ -680,7 +692,10 @@
 					hdrToneMapping: configStore.hdrToneMapping
 				});
 			} else if (configStore.syncMode === 'AudioSync') {
-				liveAudioAnalysis = getAudioAnalysis(configStore.audioSensitivity);
+				const analysis = getAudioAnalysis(configStore.audioSensitivity);
+				liveAudioAnalysis = analysis;
+				updateAudioVisualizer(analysis);
+
 				rawColors = sampleAudioRhythmColors(totalPixels, {
 					audioPalette: configStore.audioPalette,
 					audioStereoMode: configStore.audioStereoMode,
@@ -688,7 +703,7 @@
 					bottomPixels: configStore.bottomPixels,
 					leftPixels: configStore.leftPixels,
 					rightPixels: configStore.rightPixels
-				}, liveAudioAnalysis);
+				}, analysis);
 			} else if (configStore.syncMode === 'MoodLight') {
 				rawColors = sampleMoodLightColors(totalPixels, {
 					moodPreset: configStore.moodPreset,
@@ -781,6 +796,10 @@
 		}
 		stopScreenCapture();
 		stopAudioCapture();
+		prevColors = [];
+		barPeakTracker.fill(0.2);
+		liveAudioAnalysis = { bass: 0, mid: 0, treble: 0, volume: 0 };
+		updateAudioVisualizer(liveAudioAnalysis);
 
 		// Send Clear (0x00000000) frame to turn off all LEDs when stopping sync
 		if (configStore.isConnected) {
@@ -896,7 +915,7 @@
 							{#each audioBarHeights as height}
 								<div class="flex-1 flex flex-col items-center justify-end h-32 max-w-[14px]">
 									<div 
-										class="w-full bg-gradient-to-t from-pink-600 via-purple-500 to-cyan-400 rounded-t-sm transition-all duration-75 ease-out shadow-[0_0_12px_rgba(236,72,153,0.5)]"
+										class="w-full bg-gradient-to-t from-pink-600 via-purple-500 to-cyan-400 rounded-t-sm transition-[height] duration-75 ease-out shadow-[0_0_12px_rgba(236,72,153,0.5)]"
 										style="height: {height}%;"
 									>
 										<div class="w-full h-1 bg-cyan-300 rounded-t-sm shadow-[0_0_6px_#22d3ee]"></div>
@@ -982,7 +1001,6 @@
 				<button 
 					onclick={() => {
 						configStore.syncMode = 'ScreenSync';
-						if (configStore.isRunning) startStreaming();
 					}}
 					class="flex flex-col items-center justify-center py-3 px-2 rounded-xl border transition-all cursor-pointer titlebar-no-drag gap-1.5
 					{configStore.syncMode === 'ScreenSync' 
@@ -996,7 +1014,6 @@
 				<button 
 					onclick={() => {
 						configStore.syncMode = 'AudioSync';
-						if (configStore.isRunning) startStreaming();
 					}}
 					class="flex flex-col items-center justify-center py-3 px-2 rounded-xl border transition-all cursor-pointer titlebar-no-drag gap-1.5
 					{configStore.syncMode === 'AudioSync' 
@@ -1010,7 +1027,6 @@
 				<button 
 					onclick={() => {
 						configStore.syncMode = 'MoodLight';
-						if (configStore.isRunning) startStreaming();
 					}}
 					class="flex flex-col items-center justify-center py-3 px-2 rounded-xl border transition-all cursor-pointer titlebar-no-drag gap-1.5
 					{configStore.syncMode === 'MoodLight' 

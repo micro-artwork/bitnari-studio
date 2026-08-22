@@ -7,8 +7,10 @@
 let audioCtx = null;
 let analyser = null;
 let mediaStream = null;
+let audioOnlyStream = null;
 let sourceNode = null;
 let freqData = null;
+let audioSessionId = 0;
 
 /**
  * Enumerate all available audio input devices (Microphones, Stereo Mix, Line-In)
@@ -35,22 +37,31 @@ export async function initAudioCapture(
   audioSource = 'SystemAudio',
   deviceId = '',
 ) {
+  const thisSession = ++audioSessionId;
+  stopAudioCaptureInternal();
+
+  console.log(
+    `[AudioService] Initializing Audio Capture (Source: ${audioSource}, DeviceId: ${deviceId || 'default'}, Session #${thisSession})...`,
+  );
+
+  let tempCtx = null;
+  let tempStream = null;
+
   try {
-    stopAudioCapture();
+    tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (tempCtx.state === 'suspended') {
+      await tempCtx.resume();
+    }
 
-    console.log(
-      `[AudioService] Initializing Audio Capture (Source: ${audioSource}, DeviceId: ${deviceId || 'default'})...`,
-    );
-
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
+    if (thisSession !== audioSessionId) {
+      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      return false;
     }
 
     if (deviceId && deviceId.trim() !== '') {
       // Target specific Microphone/Stereo Mix device ID
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
+        tempStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: { exact: deviceId },
             echoCancellation: false,
@@ -67,9 +78,15 @@ export async function initAudioCapture(
       }
     }
 
-    if (!mediaStream && audioSource === 'Microphone') {
+    if (thisSession !== audioSessionId) {
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      return false;
+    }
+
+    if (!tempStream && audioSource === 'Microphone') {
       // Capture default microphone input
-      mediaStream = await navigator.mediaDevices.getUserMedia({
+      tempStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
@@ -77,10 +94,22 @@ export async function initAudioCapture(
         },
         video: false,
       });
-    } else if (!mediaStream) {
-      // Capture PC Desktop Audio Output (Speaker / Game / USB DAC sound loopback)
+    } else if (!tempStream) {
+      // Capture PC Desktop Audio Output (Speaker / Game / USB DAC sound loopback via Electron WASAPI)
       try {
-        // Fetch Electron Desktop Capturer screen source ID
+        console.log(
+          '[AudioService] Requesting Electron WASAPI Desktop Audio Loopback via getDisplayMedia...',
+        );
+        tempStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
+        });
+      } catch (err) {
+        console.warn(
+          '[AudioService] getDisplayMedia loopback failed, trying getUserMedia desktop source fallback:',
+          err.message,
+        );
+
         let screenSourceId = 'screen:0:0';
         if (window.api && window.api.getScreenSources) {
           const sources = await window.api.getScreenSources();
@@ -89,41 +118,32 @@ export async function initAudioCapture(
           }
         }
 
-        console.log(
-          `[AudioService] Requesting Electron WASAPI Desktop Audio Loopback (SourceID: ${screenSourceId})...`,
-        );
+        if (thisSession !== audioSessionId) {
+          if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+          return false;
+        }
 
-        // Electron Desktop Media Capture Constraints
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            mandatory: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: screenSourceId,
-            },
-          },
-          video: {
-            mandatory: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: screenSourceId,
-            },
-          },
-        });
-      } catch (err) {
-        console.warn(
-          '[AudioService] Electron WASAPI Desktop Loopback failed, trying getDisplayMedia:',
-          err.message,
-        );
         try {
-          mediaStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: true,
+          tempStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: screenSourceId,
+              },
+            },
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: screenSourceId,
+              },
+            },
           });
         } catch (err2) {
           console.warn(
-            '[AudioService] getDisplayMedia failed, falling back to default audio input:',
+            '[AudioService] getUserMedia desktop loopback failed, falling back to default audio input:',
             err2.message,
           );
-          mediaStream = await navigator.mediaDevices.getUserMedia({
+          tempStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
             video: false,
           });
@@ -131,23 +151,35 @@ export async function initAudioCapture(
       }
     }
 
-    if (!mediaStream) {
+    if (thisSession !== audioSessionId) {
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      return false;
+    }
+
+    if (!tempStream) {
       throw new Error('Failed to create media stream');
     }
 
-    const audioTracks = mediaStream.getAudioTracks();
+    const audioTracks = tempStream.getAudioTracks();
     if (audioTracks.length === 0) {
       console.warn(
         '[AudioService] No audio track found in captured stream, attempting microphone fallback...',
       );
-      // Robust Fallback: getUserMedia audio
-      mediaStream = await navigator.mediaDevices.getUserMedia({
+      tempStream.getTracks().forEach((t) => t.stop());
+      tempStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: false,
       });
     }
 
-    const activeAudioTrack = mediaStream.getAudioTracks()[0];
+    if (thisSession !== audioSessionId) {
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      return false;
+    }
+
+    const activeAudioTrack = tempStream.getAudioTracks()[0];
     if (!activeAudioTrack) {
       throw new Error('No active audio track available in system stream');
     }
@@ -157,19 +189,15 @@ export async function initAudioCapture(
       activeAudioTrack.label || 'System Loopback',
     );
 
-    // Stop video tracks to save GPU/CPU resources
-    mediaStream.getVideoTracks().forEach((track) => {
-      console.log(
-        '[AudioService] Disabling unused screen video track:',
-        track.label,
-      );
-      track.stop();
+    // Disable video tracks without stopping them so Chromium does not kill the desktop loopback session
+    tempStream.getVideoTracks().forEach((track) => {
+      track.enabled = false;
     });
 
-    // Create audio-only stream for Web Audio API AnalyserNode
-    const audioOnlyStream = new MediaStream([activeAudioTrack]);
+    audioCtx = tempCtx;
+    mediaStream = tempStream;
 
-    sourceNode = audioCtx.createMediaStreamSource(audioOnlyStream);
+    sourceNode = audioCtx.createMediaStreamSource(tempStream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256; // 128 frequency bins
     analyser.smoothingTimeConstant = 0.7;
@@ -206,7 +234,9 @@ export async function initAudioCapture(
       '[AudioService] Audio capture initialization failed:',
       err.message,
     );
-    stopAudioCapture();
+    if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+    if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+    stopAudioCaptureInternal();
     return false;
   }
 }
@@ -229,9 +259,17 @@ let rightBassAvgTracker = 0.2;
 let rightMidAvgTracker = 0.25;
 let rightTrebleAvgTracker = 0.1;
 
-export function stopAudioCapture() {
+function stopAudioCaptureInternal() {
+  if (audioOnlyStream) {
+    try {
+      audioOnlyStream.getTracks().forEach((t) => t.stop());
+    } catch (e) {}
+    audioOnlyStream = null;
+  }
   if (mediaStream) {
-    mediaStream.getTracks().forEach((t) => t.stop());
+    try {
+      mediaStream.getTracks().forEach((t) => t.stop());
+    } catch (e) {}
     mediaStream = null;
   }
   if (sourceNode) {
@@ -261,6 +299,17 @@ export function stopAudioCapture() {
   bassAvgTracker = 0.2;
   midAvgTracker = 0.25;
   trebleAvgTracker = 0.1;
+  leftBassAvgTracker = 0.2;
+  leftMidAvgTracker = 0.25;
+  leftTrebleAvgTracker = 0.1;
+  rightBassAvgTracker = 0.2;
+  rightMidAvgTracker = 0.25;
+  rightTrebleAvgTracker = 0.1;
+}
+
+export function stopAudioCapture() {
+  audioSessionId++;
+  stopAudioCaptureInternal();
 }
 
 function analyzeBuffer(fData, trackers, sensitivity) {

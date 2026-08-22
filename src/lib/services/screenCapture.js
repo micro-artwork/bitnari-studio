@@ -50,29 +50,39 @@ export function getPositionsAndDirections(
   return { positions, arrayDirections };
 }
 
+let screenSessionId = 0;
+
 export async function initScreenCapture(targetScreenId = '') {
+  const thisSession = ++screenSessionId;
+
+  if (mediaStream) {
+    if (!targetScreenId || currentScreenId === targetScreenId) return true;
+    stopScreenCaptureInternal();
+  }
+
+  console.log(
+    `[ScreenCapture] Initializing native screen capture for screenId: ${targetScreenId || 'default'} (Session #${thisSession})...`,
+  );
+
+  let tempStream = null;
+  let tempVideo = null;
+  let tempCanvas = null;
+  let resolvedScreenId = '';
+
   try {
-    if (mediaStream) {
-      if (!targetScreenId || currentScreenId === targetScreenId) return true;
-      stopScreenCapture();
-    }
-
-    console.log(
-      '[ScreenCapture] Initializing native screen capture for screenId:',
-      targetScreenId || 'default',
-    );
-
     // 1. Try desktopCapturer via Electron API (Native Electron Desktop Media)
     if (window.api && window.api.getScreenSources) {
       try {
         const sources = await window.api.getScreenSources();
+        if (thisSession !== screenSessionId) return false;
+
         console.log('[ScreenCapture] Electron screen sources found:', sources);
         if (sources && sources.length > 0) {
           const selectedSource =
             sources.find((s) => s.id === targetScreenId) || sources[0];
-          currentScreenId = selectedSource.id;
+          resolvedScreenId = selectedSource.id;
 
-          mediaStream = await navigator.mediaDevices.getUserMedia({
+          tempStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
               mandatory: {
@@ -92,14 +102,19 @@ export async function initScreenCapture(targetScreenId = '') {
       }
     }
 
+    if (thisSession !== screenSessionId) {
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      return false;
+    }
+
     // 2. Fallback to standard getDisplayMedia
     if (
-      !mediaStream &&
+      !tempStream &&
       navigator.mediaDevices &&
       navigator.mediaDevices.getDisplayMedia
     ) {
       try {
-        mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        tempStream = await navigator.mediaDevices.getDisplayMedia({
           video: { cursor: 'never', frameRate: { ideal: 60 } },
           audio: false,
         });
@@ -111,17 +126,42 @@ export async function initScreenCapture(targetScreenId = '') {
       }
     }
 
-    if (!mediaStream) {
+    if (thisSession !== screenSessionId) {
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      return false;
+    }
+
+    if (!tempStream) {
       throw new Error('No media stream available for screen capture');
     }
 
-    videoElem = document.createElement('video');
-    videoElem.autoplay = true;
-    videoElem.srcObject = mediaStream;
-    await videoElem.play();
+    tempVideo = document.createElement('video');
+    tempVideo.muted = true;
+    tempVideo.playsInline = true;
+    tempVideo.autoplay = true;
+    tempVideo.srcObject = tempStream;
+    await tempVideo.play();
 
-    canvasElem = document.createElement('canvas');
-    canvasCtx = canvasElem.getContext('2d', { willReadFrequently: true });
+    if (thisSession !== screenSessionId) {
+      if (tempVideo) {
+        tempVideo.pause();
+        tempVideo.srcObject = null;
+      }
+      if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+      return false;
+    }
+
+    tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
+    stopScreenCaptureInternal();
+
+    mediaStream = tempStream;
+    videoElem = tempVideo;
+    canvasElem = tempCanvas;
+    canvasCtx = tempCtx;
+    currentScreenId = resolvedScreenId || targetScreenId || 'default';
+
     console.log(
       '[ScreenCapture] Screen capture stream successfully started for screen:',
       currentScreenId,
@@ -132,13 +172,17 @@ export async function initScreenCapture(targetScreenId = '') {
       '[ScreenCapture] Screen capture initialization failed:',
       err.message,
     );
-    mediaStream = null;
-    currentScreenId = '';
+    if (tempVideo) {
+      tempVideo.pause();
+      tempVideo.srcObject = null;
+    }
+    if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
+    stopScreenCaptureInternal();
     return false;
   }
 }
 
-export function stopScreenCapture() {
+function stopScreenCaptureInternal() {
   if (mediaStream) {
     try {
       mediaStream.getTracks().forEach((t) => t.stop());
@@ -160,6 +204,11 @@ export function stopScreenCapture() {
   }
   canvasCtx = null;
   currentScreenId = '';
+}
+
+export function stopScreenCapture() {
+  screenSessionId++;
+  stopScreenCaptureInternal();
 }
 
 export function sampleScreenColors(totalPixels = 182, config = {}) {

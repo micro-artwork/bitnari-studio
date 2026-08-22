@@ -63,11 +63,16 @@ class SerialService {
     }
 
     async disconnectPort() {
-        if (!this.port || !this.port.isOpen) return true;
+        if (!this.port || !this.port.isOpen) {
+            this.queue = [];
+            this.isWriting = false;
+            return true;
+        }
 
         return new Promise((resolve) => {
             this.pendingBuffer = null;
             this.isWriting = false;
+            this.queue = [];
             this.port.close((err) => {
                 if (err) {
                     console.error('[SerialService] Error closing port:', err);
