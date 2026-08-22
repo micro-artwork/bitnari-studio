@@ -1,6 +1,6 @@
 {
   "name": "bitnari-electron",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ambilight Desktop Control Application built with Electron, SvelteKit, and bits-ui",
   "author": "Bitnari",
   "main": "electron/main.js",
