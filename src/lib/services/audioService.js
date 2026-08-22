@@ -54,7 +54,9 @@ export async function initAudioCapture(
     }
 
     if (thisSession !== audioSessionId) {
-      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      if (tempCtx && tempCtx.state !== 'closed') {
+        tempCtx.close().catch((err) => console.warn('[AudioService] tempCtx close error:', err.message));
+      }
       return false;
     }
 
@@ -80,7 +82,9 @@ export async function initAudioCapture(
 
     if (thisSession !== audioSessionId) {
       if (tempStream) tempStream.getTracks().forEach((t) => t.stop());
-      if (tempCtx && tempCtx.state !== 'closed') tempCtx.close().catch(() => {});
+      if (tempCtx && tempCtx.state !== 'closed') {
+        tempCtx.close().catch((err) => console.warn('[AudioService] tempCtx close error:', err.message));
+      }
       return false;
     }
 
@@ -289,7 +293,7 @@ function stopAudioCaptureInternal() {
   analyserRight = null;
   if (audioCtx && audioCtx.state !== 'closed') {
     try {
-      audioCtx.close();
+      audioCtx.close().catch((err) => console.warn('[AudioService] audioCtx close error:', err.message));
     } catch (e) {}
     audioCtx = null;
   }

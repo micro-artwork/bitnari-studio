@@ -164,13 +164,18 @@ function createWindow() {
 app.whenReady().then(() => {
   // Handle custom privileged 'app://' protocol to cleanly serve SvelteKit static SPA build
   protocol.handle('app', (request) => {
-    const url = new URL(request.url);
-    let pathname = decodeURIComponent(url.pathname);
-    if (pathname === '/' || pathname === '') {
-      pathname = '/index.html';
+    try {
+      const url = new URL(request.url);
+      let pathname = decodeURIComponent(url.pathname);
+      if (pathname === '/' || pathname === '') {
+        pathname = '/index.html';
+      }
+      const filePath = path.join(__dirname, '../build', pathname);
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (err) {
+      console.error('[Protocol app://] Failed to handle asset request:', request.url, err);
+      return new Response('File not found or protocol error', { status: 404 });
     }
-    const filePath = path.join(__dirname, '../build', pathname);
-    return net.fetch(pathToFileURL(filePath).toString());
   });
 
   // Remove default top window menu bar (File, Edit, View, Window, Help)
